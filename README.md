@@ -1,4 +1,4 @@
-# Satyapan — AICTE application validation prototype (SIH26261)
+# Satyapan - AICTE application validation
 
 Pre-scrutiny decision support for **Extension of Approval (self-disclosure)** under the **APH 2024-27**.
 Everything runs locally and free: no cloud APIs, no LLMs, no paid services.
