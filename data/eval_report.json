@@ -1,0 +1,363 @@
+{
+ "generated_at": "2026-10-24T21:10:00+00:00",
+ "synthetic": {
+  "applications": 36,
+  "planted_defects": 56,
+  "clean_applications": 7,
+  "clean_with_unexplained_alert": 0,
+  "per_defect": [
+   {
+    "code": "CADRE_SHORTFALL",
+    "label": "Cadre ratio shortfall",
+    "planted": 2,
+    "detected": 2,
+    "recall": 1.0,
+    "detected_by": {
+     "NORM-CADRE": 2
+    }
+   },
+   {
+    "code": "DOC_REUSE",
+    "label": "Another institution's NOC re-used",
+    "planted": 3,
+    "detected": 3,
+    "recall": 1.0,
+    "detected_by": {
+     "NET-REF_FIRE_NOC": 3
+    }
+   },
+   {
+    "code": "ESTAMP_NOT_FOUND",
+    "label": "e-stamp not in SHCIL register",
+    "planted": 2,
+    "detected": 2,
+    "recall": 1.0,
+    "detected_by": {
+     "VER-ESTAMP_REGISTRY": 2
+    }
+   },
+   {
+    "code": "ESTAMP_REUSE",
+    "label": "e-stamp re-used",
+    "planted": 3,
+    "detected": 3,
+    "recall": 1.0,
+    "detected_by": {
+     "NET-REF_AFFIDAVIT_2": 3
+    }
+   },
+   {
+    "code": "FIRE_EXPIRED",
+    "label": "Expired fire NOC",
+    "planted": 2,
+    "detected": 2,
+    "recall": 1.0,
+    "detected_by": {
+     "VAL-FIRE": 2,
+     "VER-FIRE_NOC_REGISTRY": 2
+    }
+   },
+   {
+    "code": "FSR_SHORTFALL",
+    "label": "Faculty:student ratio shortfall",
+    "planted": 4,
+    "detected": 4,
+    "recall": 1.0,
+    "detected_by": {
+     "NORM-FSR": 4
+    }
+   },
+   {
+    "code": "GHOST_FACULTY",
+    "label": "Faculty on two rosters",
+    "planted": 2,
+    "detected": 2,
+    "recall": 1.0,
+    "detected_by": {
+     "NET-FACULTY": 2
+    }
+   },
+   {
+    "code": "INTAKE_EXCEEDS",
+    "label": "Intake above approved",
+    "planted": 2,
+    "detected": 2,
+    "recall": 1.0,
+    "detected_by": {
+     "LEDGER-INTAKE": 2
+    }
+   },
+   {
+    "code": "MISSING_DOC",
+    "label": "Required document missing",
+    "planted": 1,
+    "detected": 1,
+    "recall": 1.0,
+    "detected_by": {
+     "DOC-MAP": 1
+    }
+   },
+   {
+    "code": "NAME_MISMATCH",
+    "label": "Certificate in another name",
+    "planted": 3,
+    "detected": 3,
+    "recall": 1.0,
+    "detected_by": {
+     "XDOC-NAME-OC": 3,
+     "XDOC-TRUST-OC": 3
+    }
+   },
+   {
+    "code": "PHOTO_GPS_MISMATCH",
+    "label": "Photos geotagged elsewhere",
+    "planted": 3,
+    "detected": 3,
+    "recall": 1.0,
+    "detected_by": {
+     "FOR-GPS": 3
+    }
+   },
+   {
+    "code": "PHOTO_REUSE",
+    "label": "Photo re-used from another institution",
+    "planted": 3,
+    "detected": 3,
+    "recall": 1.0,
+    "detected_by": {
+     "NET-PHOTO": 3
+    }
+   },
+   {
+    "code": "REGISTRY_MISMATCH",
+    "label": "Document differs from issuer record",
+    "planted": 9,
+    "detected": 9,
+    "recall": 1.0,
+    "detected_by": {
+     "VER-ESTAMP_REGISTRY": 3,
+     "VER-FIRE_NOC_REGISTRY": 6,
+     "VER-OCCUPANCY_REGISTRY": 1
+    }
+   },
+   {
+    "code": "SIGNATURE_BROKEN",
+    "label": "Edited after DSC signing",
+    "planted": 3,
+    "detected": 3,
+    "recall": 1.0,
+    "detected_by": {
+     "VAL-DSC": 3,
+     "VER-DIGITAL_SIGNATURE": 3
+    }
+   },
+   {
+    "code": "SSC_EXPIRED",
+    "label": "Structural certificate > 5 years",
+    "planted": 3,
+    "detected": 3,
+    "recall": 1.0,
+    "detected_by": {
+     "VAL-SSC": 3
+    }
+   },
+   {
+    "code": "STAMP_VALUE_LOW",
+    "label": "e-stamp below Rs.100",
+    "planted": 2,
+    "detected": 2,
+    "recall": 1.0,
+    "detected_by": {
+     "VAL-STAMP": 2,
+     "VER-ESTAMP_REGISTRY": 1
+    }
+   },
+   {
+    "code": "TAMPER_RESAVE",
+    "label": "Value edited & re-saved",
+    "planted": 4,
+    "detected": 4,
+    "recall": 1.0,
+    "detected_by": {
+     "FOR-STRUCTURE": 3,
+     "FOR-EDITOR": 1
+    }
+   },
+   {
+    "code": "TAMPER_WHITEOUT",
+    "label": "Date white-boxed & retyped",
+    "planted": 2,
+    "detected": 2,
+    "recall": 1.0,
+    "detected_by": {
+     "FOR-WHITEOUT": 2,
+     "FOR-REVISION": 2
+    }
+   },
+   {
+    "code": "TER_UNDERPAID",
+    "label": "TER under-paid",
+    "planted": 1,
+    "detected": 1,
+    "recall": 1.0,
+    "detected_by": {
+     "NORM-TER": 1
+    }
+   },
+   {
+    "code": "UDIN_NOT_FOUND",
+    "label": "UDIN not registered",
+    "planted": 2,
+    "detected": 2,
+    "recall": 1.0,
+    "detected_by": {
+     "VER-ICAI_UDIN": 2
+    }
+   }
+  ],
+  "misses": [],
+  "unexplained_alerts": {
+   "NET-REF_AFFIDAVIT_2": 1
+  },
+  "lanes": [
+   {
+    "expected": "amber",
+    "got": "amber",
+    "n": 11
+   },
+   {
+    "expected": "green",
+    "got": "green",
+    "n": 7
+   },
+   {
+    "expected": "red",
+    "got": "red",
+    "n": 18
+   }
+  ],
+  "extraction": {
+   "text": {
+    "n": 466,
+    "ok": 452,
+    "accuracy": 0.97
+   },
+   "ocr": {
+    "n": 112,
+    "ok": 98,
+    "accuracy": 0.875
+   }
+  },
+  "avg_seconds": 19.9,
+  "wall_seconds": 831.3
+ },
+ "real": {
+  "genuine_letters_tested": 30,
+  "genuine_false_alarms": 0,
+  "attacks": {
+   "whiteout_incremental": {
+    "tested": 28,
+    "detected": 28,
+    "rate": 1.0
+   },
+   "redact_resave": {
+    "tested": 28,
+    "detected": 28,
+    "rate": 1.0
+   }
+  },
+  "signals": {
+   "FOR-REVISION": 28,
+   "FOR-WHITEOUT": 28,
+   "FOR-STRUCTURE": 28
+  },
+  "corpus": {
+   "files": 84,
+   "producers": [
+    [
+     "Oracle BI Publisher 11.1.1.9.0",
+     49
+    ],
+    [
+     "Oracle Analytics Publisher",
+     20
+    ],
+    [
+     "iLovePDF",
+     7
+    ],
+    [
+     "PDFium",
+     3
+    ],
+    [
+     "cairo 1.18.0 (https://cairographics.org)",
+     2
+    ],
+    [
+     "Adobe Scan for Android 25.11.10-google-d",
+     1
+    ],
+    [
+     "GPL Ghostscript 9.52",
+     1
+    ],
+    [
+     "GPL Ghostscript 9.55.0",
+     1
+    ]
+   ],
+   "provenance": [
+    [
+     "original portal output",
+     69
+    ],
+    [
+     "re-processed by another tool",
+     14
+    ],
+    [
+     "scanned",
+     1
+    ]
+   ],
+   "revisions": [
+    [
+     "single revision",
+     80
+    ],
+    [
+     "edited after generation",
+     2
+    ],
+    [
+     "linearized (not an edit)",
+     2
+    ]
+   ],
+   "letters": 122,
+   "institutions": 73,
+   "course_rows": 1335,
+   "years": [
+    "2018-19",
+    "2019-20",
+    "2020-21",
+    "2021-22",
+    "2022-23",
+    "2023-24",
+    "2024-25",
+    "2025-26",
+    "2026-27"
+   ],
+   "cross_year": {
+    "checks": 420,
+    "issues": 0
+   }
+  },
+  "note": "Tampered copies change one approved-intake figure on page 1, as a forger raising intake would. Detection here is from file forensics alone; in the product the same letter is also checked against the AICTE record, which catches the change regardless."
+ },
+ "assumption_manual_minutes": {
+  "value": 45,
+  "note": "Assumed time for an officer to scrutinise 7 documents + roster by hand; an assumption for comparison, not a measurement."
+ }
+}

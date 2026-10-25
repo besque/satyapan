@@ -1,0 +1,83 @@
+{
+ "files": 84,
+ "producers": [
+  [
+   "Oracle BI Publisher 11.1.1.9.0",
+   49
+  ],
+  [
+   "Oracle Analytics Publisher",
+   20
+  ],
+  [
+   "iLovePDF",
+   7
+  ],
+  [
+   "PDFium",
+   3
+  ],
+  [
+   "cairo 1.18.0 (https://cairographics.org)",
+   2
+  ],
+  [
+   "Adobe Scan for Android 25.11.10-google-d",
+   1
+  ],
+  [
+   "GPL Ghostscript 9.52",
+   1
+  ],
+  [
+   "GPL Ghostscript 9.55.0",
+   1
+  ]
+ ],
+ "provenance": [
+  [
+   "original portal output",
+   69
+  ],
+  [
+   "re-processed by another tool",
+   14
+  ],
+  [
+   "scanned",
+   1
+  ]
+ ],
+ "revisions": [
+  [
+   "single revision",
+   80
+  ],
+  [
+   "edited after generation",
+   2
+  ],
+  [
+   "linearized (not an edit)",
+   2
+  ]
+ ],
+ "letters": 122,
+ "institutions": 73,
+ "course_rows": 1335,
+ "years": [
+  "2018-19",
+  "2019-20",
+  "2020-21",
+  "2021-22",
+  "2022-23",
+  "2023-24",
+  "2024-25",
+  "2025-26",
+  "2026-27"
+ ],
+ "cross_year": {
+  "checks": 420,
+  "issues": 0
+ }
+}
