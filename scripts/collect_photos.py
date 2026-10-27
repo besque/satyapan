@@ -13,7 +13,7 @@ import requests
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "data" / "raw" / "photos"
 API = "https://commons.wikimedia.org/w/api.php"
-UA = {"User-Agent": "SatyapanPrototype/0.1 (SIH research prototype; contact: local)"}
+UA = {"User-Agent": "Satyapan/1.0 (document verification)"}
 CATEGORIES = {
     "classroom": ["Category:Classrooms in India", "Category:Lecture halls in India"],
     "laboratory": ["Category:Laboratories in India", "Category:Computer labs in India", "Category:Engineering laboratories"],

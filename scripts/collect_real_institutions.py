@@ -48,7 +48,7 @@ SOURCES = {
 
 def main() -> None:
     s = requests.Session()
-    s.headers["User-Agent"] = "Mozilla/5.0 (research prototype)"
+    s.headers["User-Agent"] = "Mozilla/5.0 (Satyapan document collector)"
     for key, src in SOURCES.items():
         d = OUT / key
         d.mkdir(parents=True, exist_ok=True)

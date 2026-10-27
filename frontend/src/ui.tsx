@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { img } from './api'
 
 /* ---------- plain words for statuses ---------- */
@@ -31,7 +32,26 @@ export const docTitle = (t: string) => ({
 
 /* ---------- small info icon that hides detail ---------- */
 export function Tip({ children }: { children: ReactNode }) {
-  return <span className="tip" tabIndex={0}><span className="i">i</span><span className="pop">{children}</span></span>
+  // The pop-up is rendered on <body> with fixed positioning, so no box, table or strip can clip it.
+  const ref = useRef<HTMLSpanElement>(null)
+  const [pos, setPos] = useState<{ left: number; top: number; up: boolean } | null>(null)
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect()
+    if (!r) return
+    const w = Math.min(300, window.innerWidth - 24)
+    const left = Math.max(12, Math.min(r.left - 10, window.innerWidth - w - 12))
+    const up = r.bottom + 160 > window.innerHeight && r.top > 180
+    setPos({ left, top: up ? r.top - 6 : r.bottom + 6, up })
+  }
+  return (
+    <span ref={ref} className="tip" tabIndex={0} onMouseEnter={show} onMouseLeave={() => setPos(null)} onFocus={show} onBlur={() => setPos(null)}
+      onClick={(e) => { e.stopPropagation(); pos ? setPos(null) : show() }}>
+      <span className="i">i</span>
+      {pos && createPortal(
+        <span className="pop-float" style={{ left: pos.left, top: pos.top, transform: pos.up ? 'translateY(-100%)' : undefined }}>{children}</span>,
+        document.body)}
+    </span>
+  )
 }
 
 /* ---------- document page with ONE highlight at a time ---------- */

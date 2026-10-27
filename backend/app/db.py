@@ -1,4 +1,4 @@
-"""SQLite storage. Plain sqlite3 + JSON columns keeps the prototype dependency-free."""
+"""SQLite storage. Plain sqlite3 + JSON columns keeps deployment dependency-free."""
 from __future__ import annotations
 
 import json

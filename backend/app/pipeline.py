@@ -164,6 +164,46 @@ def forensic_findings(d: dict, ctx: dict) -> list[dict]:
     return out
 
 
+def _wrong_slot(d: dict) -> bool:
+    decl = d.get("declared_type")
+    if not decl or decl == "infra_photo" or decl not in D.DOC_TYPES:
+        return False
+    cls = d.get("classification") or {}
+    det = cls.get("doc_type")
+    if det == "unknown":
+        return True
+    return det != decl and cls.get("score", 0) >= 0.55
+
+
+def _apply_wrong_slots(findings: list[dict], wrong: list[dict]) -> list[dict]:
+    if not wrong:
+        return findings
+    rules = {r["id"]: r for r in engine.ruleset()["rules"]}
+    missing_rule = {r["params"]["doc_type"]: rid for rid, r in rules.items() if r["type"] == "document_present"}
+    replaced = {missing_rule.get(d["declared_type"]) for d in wrong} | {"DOC-SLOT"}
+    out = [f for f in findings if f["rule_id"] not in replaced]
+    for d in wrong:
+        decl = d["declared_type"]
+        name = D.PLAIN.get(decl, decl.replace("_", " "))
+        cls = d.get("classification") or {}
+        det = cls.get("doc_type")
+        if det and det != "unknown":
+            other = D.PLAIN.get(det, det.replace("_", " "))
+            detail = f"The file '{d['filename']}' was uploaded as the {name}, but it is actually the {other}."
+            ev = [{"doc_id": d["id"], "doc_type": decl, "page": e["page"], "bbox": e["bbox"], "label": f"shows it is the {other}: '{e['phrase']}'",
+                   "kind": "classifier"} for e in (cls.get("evidence") or [])[:3]]
+        else:
+            detail = (f"The file '{d['filename']}' was uploaded as the {name}, but it does not look like one: "
+                      f"no issuing office, certificate number or validity date could be found in it.")
+            ev = [{"doc_id": d["id"], "doc_type": decl, "page": 0, "bbox": None, "label": "whole document", "kind": "classifier"}]
+        rule = rules.get(missing_rule.get(decl, ""), {})
+        out.append({"rule_id": "WRONG-DOC", "kind": "deficiency", "severity": "high", "status": "fail",
+                    "title": f"Wrong document uploaded as {name}", "detail": detail, "evidence": ev, "document_id": d["id"],
+                    "remedy": rule.get("remedy") or f"Upload the correct {name}.",
+                    "citation": {**rule.get("cite", {}), "loc": rule.get("cite_loc")} if rule else {}})
+    return out
+
+
 # ---------------------------------------------------------------------------- orchestration
 
 SEV_W = {"critical": 40, "high": 15, "medium": 6, "low": 2}
@@ -224,20 +264,26 @@ def process(form: dict, files: list[tuple[str, bytes, str | None]], source: str 
         d = ingest_file(app_id, name, raw, declared, actor, role)
         docs.append(d)
         raws[d["id"]] = raw
-    ctx = _ctx(app, form, docs)
+    # A file uploaded under the wrong heading is reported once, clearly, and left out of every other
+    # check - otherwise one mistake shows up as a dozen confusing failures (unreadable dates, issuer
+    # lookups failing, "document missing"...).
+    wrong = [d for d in docs if _wrong_slot(d)]
+    checked = [d for d in docs if d not in wrong]
+    ctx = _ctx(app, form, checked)
     ctx["raw_by_doc"] = raws
 
     findings = []
     for r in engine.evaluate(ctx):
         findings.append({**r, "kind": "deficiency", "document_id": next((e["doc_id"] for e in r.get("evidence", []) if e.get("doc_id")), None)})
+    findings = _apply_wrong_slots(findings, wrong)
     audit.log("rules-engine", "system", "rules.evaluated", app_id,
               {"ruleset": engine.ruleset()["version"], "fail": [f["rule_id"] for f in findings if f["status"] == "fail"],
                "warn": [f["rule_id"] for f in findings if f["status"] == "warn"]})
-    for d in docs:
+    for d in checked:
         findings.extend(forensic_findings(d, ctx))
 
     verifs = []
-    for d in docs:
+    for d in checked:
         for v in connectors.run(d, ctx):
             v.update({"id": uuid.uuid4().hex[:12], "application_id": app_id, "document_id": d["id"]})
             if v["status"] in ("source_unavailable", "manual_review"):
@@ -250,16 +296,19 @@ def process(form: dict, files: list[tuple[str, bytes, str | None]], source: str 
                                         "detail": v["detail"], "ts": v["ts"]})
             audit.log(v["connector"], "connector", "verification.result", f"{app_id}/{d['id']}",
                       {"status": v["status"], "source": v["source"], "simulated": v["simulated"], "request": v["request"]})
-            if v["status"] in ("mismatch", "expired"):
+            already = v["status"] == "expired" and any(f["status"] == "fail" and f["rule_id"].startswith("VAL-") and
+                                                       (f.get("document_id") == d["id"]) for f in findings)
+            if v["status"] in ("mismatch", "expired") and not already:      # don't repeat an expiry already reported
                 findings.append({"rule_id": f"VER-{v['connector'].upper()}", "kind": "verification",
                                  "severity": "critical" if v["status"] == "mismatch" else "high", "status": "fail",
                                  "title": f"{'Source mismatch' if v['status'] == 'mismatch' else 'Expired per source'}: {D.DOC_TYPES.get(d['doc_type'], {}).get('title', d['doc_type'])}",
                                  "detail": v["detail"], "evidence": v["evidence"], "document_id": d["id"],
                                  "citation": {"ref": "Problem statement: verification through original issuing authorities", "quote": ""},
-                                 "remedy": "Seek clarification; the issuing authority's record prevails.", "confidence": 0.9})
+                                 "remedy": "Upload the certificate exactly as the issuing office gave it. If you think the office's record is wrong, contact that office.",
+                                 "confidence": 0.9})
 
     if source != "precheck":   # an institution's dry run is not part of the scrutiny network
-        graph.store_entities(app_id, graph.entities_for(app_id, form["permanent_id"], form, docs))
+        graph.store_entities(app_id, graph.entities_for(app_id, form["permanent_id"], form, checked))
     _save_findings(app_id, findings)
     lane, risk, summary = _lane(findings, verifs)
     summary["seconds"] = round(time.time() - t0, 1)

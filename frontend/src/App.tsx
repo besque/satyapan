@@ -20,7 +20,7 @@ export const useUser = () => useContext(UserCtx)!
 function Header({ user, onLogout }: { user: User | null; onLogout?: () => void }) {
   return <>
     <div className="topstrip"><div className="in">
-      <span>Approval scrutiny support · prototype for SIH 2026</span>
+      <span>Approval scrutiny &amp; document verification</span>
       {user && <span>Signed in: <b>{user.name}</b>{user.title ? ` (${user.title})` : ''} · <button onClick={onLogout}>Sign out</button></span>}
     </div></div>
     <div className="header"><div className="in">

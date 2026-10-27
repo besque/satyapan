@@ -17,7 +17,7 @@ from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 W, H = A4
-FOOT = "SYNTHETIC TEST DOCUMENT - generated for the Satyapan prototype evaluation; not a real certificate."
+FOOT = "SYNTHETIC TEST DOCUMENT - not a real certificate."
 
 
 def _canvas(producer: str, title: str):

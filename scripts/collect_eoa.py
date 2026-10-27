@@ -137,7 +137,7 @@ def main() -> int:
     manifest = json.loads(MANIFEST.read_text("utf-8")) if MANIFEST.exists() else {}
     seen_urls = {v["source_url"] for v in manifest.values()}
     session = requests.Session()
-    session.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) research-prototype"
+    session.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Satyapan"
     ok = fail = 0
     for raw in URLS:
         if not raw.strip():

@@ -26,7 +26,7 @@ from .rules import citations, engine, norms
 from .verify import connectors, registry
 
 logging.getLogger("pyhanko").setLevel(logging.CRITICAL)
-app = FastAPI(title="Satyapan - AICTE application validation (prototype)")
+app = FastAPI(title="Satyapan - application validation and document verification")
 SECRET = b"satyapan-demo-secret"
 
 USERS = {
@@ -171,8 +171,13 @@ def applications(u=Depends(user)):
 def _findings(app_id: str, u: dict) -> list[dict]:
     rows = db.q("SELECT * FROM findings WHERE application_id=?", (app_id,))
     reviews = {r["finding_id"]: r for r in db.q("SELECT * FROM reviews WHERE application_id=? ORDER BY id", (app_id,))}
+    remedies = {r["id"]: r.get("remedy") for r in engine.ruleset()["rules"]}
     out = []
     for f in rows:
+        if f["rule_id"] in remedies and remedies[f["rule_id"]]:
+            f["remedy"] = remedies[f["rule_id"]]          # rules are editable: always show the current wording
+        if u["role"] == "institution" and f["kind"] in ("authenticity", "verification"):
+            f["remedy"] = "Upload the original document exactly as the issuing office gave it, without any changes."
         if u["role"] == "institution" and f["kind"] in ("network",):
             continue        # cross-institution intelligence is not disclosed to applicants
         ev = db.unj(f["evidence"], {})
@@ -483,7 +488,10 @@ def _rerun(app_id: str, new_files: list, form_patch: dict | None, u: dict) -> di
     if not a:
         raise HTTPException(404)
     _can_see_app(u, a)
-    form = {**db.unj(a["form"], {}), **(form_patch or {})}
+    original = db.unj(a["form"], {})
+    if form_patch and "faculty" in form_patch:
+        form_patch = {**form_patch, "faculty": _restore_pans(form_patch["faculty"], original.get("faculty", []))}
+    form = {**original, **(form_patch or {})}
     replace_types = {t for _, _, t in new_files if t != "infra_photo"}
     old = [d for d in db.q("SELECT * FROM documents WHERE application_id=?", (app_id,)) if d["declared_type"] not in replace_types]
     payload = [(d["filename"], _raw(d), d["declared_type"]) for d in old] + new_files
@@ -491,6 +499,32 @@ def _rerun(app_id: str, new_files: list, form_patch: dict | None, u: dict) -> di
     audit.log(u["id"], u["role"], "application.rechecked", aid, {"previous": app_id, "replaced": sorted(replace_types),
                                                                   "form_fields_changed": sorted((form_patch or {}).keys())})
     return {"application_id": aid, "previous": app_id}
+
+
+FACULTY_COLS = ["name", "faculty_id", "designation", "qualification", "department", "date_of_joining", "dob", "pan", "gender"]
+
+
+def _restore_pans(rows: list[dict], previous: list[dict]) -> list[dict]:
+    """PANs are shown masked; when a downloaded list comes back, put the stored PAN back by faculty ID."""
+    by_id = {f.get("faculty_id"): f for f in previous if f.get("faculty_id")}
+    out = []
+    for r in rows:
+        r = {k: (str(v).strip() if v is not None else "") for k, v in r.items() if k in FACULTY_COLS}
+        if not r.get("name"):
+            continue
+        prev = by_id.get(r.get("faculty_id"))
+        if prev and (not r.get("pan") or r["pan"].upper().startswith("XXXXX")):
+            r["pan"] = prev.get("pan", "")
+            r.setdefault("dob", prev.get("dob", ""))
+        out.append(r)
+    return out
+
+
+def _parse_faculty_csv(text: str) -> list[dict]:
+    import csv
+    import io
+    rows = list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
+    return [{k.strip().lower().replace(" ", "_"): v for k, v in r.items() if k} for r in rows]
 
 
 @app.get("/api/precheck/{app_id}/fixes")
@@ -509,7 +543,10 @@ def apply_demo_fix(app_id: str, name: str, u=Depends(user)):
     p = DATA / "synthetic" / "demo" / a["permanent_id"] / "fixes" / Path(name).name
     if not p.exists():
         raise HTTPException(404)
-    return _rerun(app_id, [(p.name.split("__", 1)[1], p.read_bytes(), p.stem.split("__")[0])], None, u)
+    kind = p.stem.split("__")[0]
+    if kind == "faculty":
+        return _rerun(app_id, [], {"faculty": _parse_faculty_csv(p.read_text("utf-8"))}, u)
+    return _rerun(app_id, [(p.name.split("__", 1)[1], p.read_bytes(), kind)], None, u)
 
 
 # ------------------------------------------------------------------------------------ real EoA letter verification

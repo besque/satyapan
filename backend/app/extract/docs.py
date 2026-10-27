@@ -74,6 +74,12 @@ DOC_TYPES: dict[str, dict] = {
     "infra_photo": {"title": "Infrastructure photograph", "aph": "Clause 2.3.5 / Annexure-18 18.15", "signals": {}},
 }
 
+# Plain names used in messages to institutions
+PLAIN = {"affidavit_2": "affidavit", "ter_receipt": "fee receipt", "occupancy_certificate": "occupancy certificate",
+         "structural_stability": "structural safety certificate", "fire_noc": "fire safety certificate", "satellite_map": "location map",
+         "audited_statement": "audited accounts", "eoa_letter": "AICTE approval letter", "mandatory_disclosure": "public disclosure",
+         "infra_photo": "photo"}
+
 REQUIRED_EOA = ["affidavit_2", "ter_receipt", "occupancy_certificate", "fire_noc", "satellite_map", "audited_statement"]
 
 

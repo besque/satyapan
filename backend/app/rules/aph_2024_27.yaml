@@ -16,7 +16,7 @@ rules:
     params: {doc_type: affidavit_2}
     severity: high
     cite: {ref: "Annexure-2, 2.1 (i)", quote: "An Affidavit 2 with digital signature of the Chairman/ Secretary of the Trust/ Society/ Company on an"}
-    remedy: "Upload Affidavit-2 on Rs.100 e-stamp paper, sworn before a Notary/Magistrate/Oath Commissioner and digitally signed."
+    remedy: "Upload Affidavit-2 on a Rs.100 e-stamp paper, sworn before a notary and digitally signed by the Chairperson or Secretary."
   - id: DOC-TER
     scope: private
     title: "TER payment receipt uploaded"
@@ -24,7 +24,7 @@ rules:
     params: {doc_type: ter_receipt}
     severity: high
     cite: {ref: "Annexure-2, 2.1 (ii)", quote: "Copy of pay receipt print made on AICTE Web-Portal"}
-    remedy: "Upload the TER payment receipt generated on the AICTE Web-Portal."
+    remedy: "Download the fee receipt from the AICTE portal and upload it."
   - id: DOC-OC
     scope: private
     title: "Occupancy / Completion Certificate uploaded"
@@ -32,7 +32,7 @@ rules:
     params: {doc_type: occupancy_certificate}
     severity: high
     cite: {ref: "Annexure-2, 2.1 (iii)", quote: "valid Occupancy/ Completion Certificate/"}
-    remedy: "Upload the Occupancy/Completion Certificate/Building License/Form D issued by the Competent Authority."
+    remedy: "Upload the occupancy / completion certificate issued by your municipal or development authority."
   - id: DOC-SSC
     scope: private
     title: "Structural Stability Certificate uploaded (building older than 30 years)"
@@ -40,14 +40,14 @@ rules:
     params: {doc_type: structural_stability, when_building_age_over: 30}
     severity: high
     cite: {ref: "Annexure-2, 2.1 (iv)", quote: "Valid Structural Stability Certificate from the registered Structural Engineer, if the Building is more than thirty"}
-    remedy: "Building is more than 30 years from completion: upload a Structural Stability Certificate from a registered Structural Engineer."
+    remedy: "Your building is more than 30 years old. Get a structural safety certificate from a registered structural engineer and upload it."
   - id: DOC-FIRE
     title: "Fire Safety Certificate uploaded"
     type: document_present
     params: {doc_type: fire_noc}
     severity: high
     cite: {ref: "Annexure-2, 2.1 (v)", quote: "A valid Fire Safety Certificate issued by the Competent Authority."}
-    remedy: "Upload a valid Fire Safety Certificate issued by the State Fire Services."
+    remedy: "Upload the fire safety certificate issued by the State Fire & Emergency Services."
   - id: DOC-MAP
     scope: private
     title: "Satellite map with latitude/longitude uploaded"
@@ -55,7 +55,7 @@ rules:
     params: {doc_type: satellite_map}
     severity: medium
     cite: {ref: "Annexure-2, 2.1 (vi)", quote: "Satellite map, using suitable Web site, showing geographical location of the Land with latitude and"}
-    remedy: "Upload a satellite map marking latitude/longitude at the main building entrance."
+    remedy: "Upload a satellite map that marks the latitude and longitude of the main building entrance."
   - id: DOC-AUDIT
     scope: private
     title: "Audited statement of accounts uploaded"
@@ -63,14 +63,14 @@ rules:
     params: {doc_type: audited_statement}
     severity: medium
     cite: {ref: "Annexure-2, 2.1 (vii)", quote: "Audited statement of accounts of the Trust/ Society/ Company of the previous year."}
-    remedy: "Upload the audited statement of accounts of the previous financial year."
+    remedy: "Upload last year's audited statement of accounts of the Trust / Society."
   - id: DOC-SLOT
     title: "Document uploaded in the correct slot"
     type: slot_matches
     params: {min_confidence: 0.55}
     severity: medium
     cite: {ref: "Clause 2.3.4 (a)", quote: "All Institutions shall upload the documents (Digitally Signed using DSC) as per Annexure-2 of the"}
-    remedy: "The file uploaded under this heading looks like a different document. Upload the correct document."
+    remedy: "Upload the correct document under this heading."
 
   # ---------------------------------------------------------------- validity
   - id: VAL-FIRE
@@ -79,7 +79,7 @@ rules:
     params: {doc_type: fire_noc, field: valid_until, warn_if_before: academic_year_start}
     severity: high
     cite: {ref: "Clause 6.17 (i)", quote: "A valid Fire Safety Certificate shall be obtained from the Competent Authority."}
-    remedy: "Renew the Fire NOC; a certificate expiring before the academic year starts will need renewal proof."
+    remedy: "Renew the fire safety certificate with the State Fire & Emergency Services and upload the new one."
   - id: VAL-SSC
     scope: private
     title: "Structural Stability Certificate within 5-year validity"
@@ -87,7 +87,7 @@ rules:
     params: {doc_type: structural_stability, field: issue_date, years: 5}
     severity: high
     cite: {ref: "Clause 6.17 (h)", quote: "Structural Stability Certificate is valid for a period"}
-    remedy: "Obtain a fresh Structural Stability Certificate (validity is five years from issue)."
+    remedy: "The certificate is valid for 5 years only. Get a fresh structural safety certificate and upload it."
   - id: VAL-STAMP
     scope: private
     title: "Affidavit on e-stamp of at least Rs.100"
@@ -95,7 +95,7 @@ rules:
     params: {doc_type: affidavit_2, field: stamp_value, min: 100}
     severity: high
     cite: {ref: "Clause 2.3.4 (b)", quote: "Rs.100/- Non-Judicial stamp paper / e-stamp paper shall be Digitally Signed & uploaded on AICTE web"}
-    remedy: "Execute the affidavit on a Rs.100 e-stamp / non-judicial stamp paper."
+    remedy: "Print the affidavit again on a Rs.100 e-stamp paper and get it sworn again."
   - id: VAL-DSC
     scope: private
     title: "Affidavit digitally signed (DSC) and unchanged after signing"
@@ -103,7 +103,7 @@ rules:
     params: {doc_type: affidavit_2, signer_matches: chairperson}
     severity: high
     cite: {ref: "Annexure-2, 2.1 (i)", quote: "An Affidavit 2 with digital signature of the Chairman/ Secretary of the Trust/ Society/ Company on an"}
-    remedy: "Upload the affidavit exactly as digitally signed; any edit after signing invalidates the DSC."
+    remedy: "Upload the affidavit exactly as it was digitally signed. Any change after signing breaks the signature."
 
   # ---------------------------------------------------------------- identity & cross-document consistency
   - id: XDOC-NAME-FIRE
@@ -112,14 +112,14 @@ rules:
     params: {doc_type: fire_noc, field: premises, against: institution_name, threshold: 86}
     severity: high
     cite: {ref: "Annexure-2, 2.1 (v)", quote: "A valid Fire Safety Certificate issued by the Competent Authority."}
-    remedy: "The Fire NOC must be issued in the name of this institution / its premises."
+    remedy: "Upload the fire safety certificate issued in your institution's name."
   - id: XDOC-NAME-OC
     title: "Occupancy Certificate issued for this institution"
     type: name_matches
     params: {doc_type: occupancy_certificate, field: premises, against: institution_name, threshold: 86}
     severity: high
     cite: {ref: "Annexure-3, 3.1 (c)", quote: "Copy of the approved Plan along"}
-    remedy: "The Occupancy Certificate must refer to this institution's building."
+    remedy: "Upload the occupancy certificate issued for your institution's building."
   - id: XDOC-TRUST-OC
     scope: private
     title: "Occupancy Certificate owner is the applicant Trust/Society"
@@ -127,7 +127,7 @@ rules:
     params: {doc_type: occupancy_certificate, field: owner, against: trust_name, threshold: 86}
     severity: medium
     cite: {ref: "Clause 1.5.1 (a)", quote: "Lawful possession with clear title in the name of the Promoter Trust/Society/Company on or before"}
-    remedy: "Building documents should be in the name of the applicant Trust/Society/Company."
+    remedy: "The building must be in the name of your Trust / Society. Upload documents showing this."
   - id: XDOC-AFF-APP
     scope: private
     title: "Affidavit refers to this application"
@@ -135,7 +135,7 @@ rules:
     params: {doc_type: affidavit_2, field: application_no, against: application_no}
     severity: medium
     cite: {ref: "Affidavit-2 (1)", quote: "That I/we have applied for"}
-    remedy: "The affidavit must quote the current application number."
+    remedy: "Write this application's number on the affidavit and upload it again."
   - id: XDOC-TER-TXN
     scope: private
     title: "TER receipt matches the application"
@@ -143,7 +143,7 @@ rules:
     params: {doc_type: ter_receipt, field: txn_id, against: ter_txn_id}
     severity: medium
     cite: {ref: "Clause 2.3.2 (d)", quote: "The TER Charges shall be paid through AICTE payment gateway on AICTE Web-Portal within the"}
-    remedy: "Upload the receipt of the transaction recorded against this application."
+    remedy: "Upload the receipt for the payment made against this application."
   - id: XDOC-AREA-OC
     scope: private
     title: "Built-up area claimed is supported by the Occupancy Certificate"
@@ -151,7 +151,7 @@ rules:
     params: {doc_type: occupancy_certificate, field: built_up_area, against: builtup_area_sqm, tolerance: 0.02}
     severity: high
     cite: {ref: "Annexure-3, 3.1 (c)", quote: "The Built-up area, achieved has to be approved by the concerned Development Authority as per the"}
-    remedy: "The built-up area entered in the application exceeds what the Occupancy Certificate certifies."
+    remedy: "Correct the built-up area in the application to match your occupancy certificate."
   - id: XDOC-LATLON
     scope: private
     title: "Satellite-map coordinates match the campus location on record"
@@ -159,7 +159,7 @@ rules:
     params: {doc_type: satellite_map, max_km: 1.5}
     severity: medium
     cite: {ref: "Annexure-2, 2.1 (vi)", quote: "Satellite map, using suitable Web site, showing geographical location of the Land with latitude and"}
-    remedy: "The map location does not match the campus coordinates entered in the application."
+    remedy: "Check the campus coordinates in the application and on the map; they must be the same place."
 
   # ---------------------------------------------------------------- norms
   - id: NORM-FSR
@@ -169,7 +169,7 @@ rules:
     params: {}
     severity: high
     cite: {ref: "Annexure-5, 5.2", quote: "Sum of the number of students as per"}
-    remedy: "Recruit faculty to meet the ratio, or the deficiency must be complied within six months of the EoA."
+    remedy: "Appoint more faculty so that the faculty : student ratio is met, then update the faculty list."
   - id: NORM-CADRE
     scope: private
     title: "Cadre ratio (Professor : Associate : Assistant = 1:2:6)"
@@ -177,7 +177,7 @@ rules:
     params: {allow_associate_for_professor: true}
     severity: medium
     cite: {ref: "Annexure-5", quote: "Cadre Ratio shall be1:2:6"}
-    remedy: "Appoint Professors / Associate Professors to meet the 1:2:6 cadre ratio."
+    remedy: "Appoint Professors and Associate Professors to reach the 1 : 2 : 6 ratio."
   - id: NORM-AREA
     scope: private
     title: "Minimum built-up area for approved intake"
@@ -185,7 +185,7 @@ rules:
     params: {}
     severity: high
     cite: {ref: "Annexure-3, 3.2", quote: "Total Built-up area in m2 is equal to (INA+ADA+AMA) + (ACA)."}
-    remedy: "Built-up area is below the Annexure-3 requirement for the applied intake."
+    remedy: "Increase the built-up area, or apply for a lower intake."
   - id: NORM-TER
     scope: private
     title: "TER charges paid in full"
@@ -193,7 +193,7 @@ rules:
     params: {}
     severity: high
     cite: {ref: "Clause 2.3.2, Table 2.1", quote: "TER charges for EoA based on Self-Disclosure and Continuation of OCI / FN / Children of Indian Workers in the Gulf Countries seats are considered for the"}
-    remedy: "Pay the balance TER charges through the AICTE payment gateway."
+    remedy: "Pay the balance fee on the AICTE portal and upload the new receipt."
   - id: NORM-PRINCIPAL
     scope: private
     title: "Regular, qualified Principal/Director"
@@ -201,7 +201,7 @@ rules:
     params: {}
     severity: medium
     cite: {ref: "Clause 7.4 (b)", quote: "Non-Fulfilment of Requirement of Qualified Principal/ Director"}
-    remedy: "Appoint a regular Principal/Director qualified as per AICTE norms."
+    remedy: "Appoint a regular Principal / Director with the required qualification."
 
   # ---------------------------------------------------------------- institutional record (ledger)
   - id: LEDGER-INTAKE
@@ -210,14 +210,14 @@ rules:
     params: {}
     severity: high
     cite: {ref: "Clause 7.4 (g)", quote: "Excess admission over the"}
-    remedy: "An increase in intake must be applied for under 'Increase in Intake / Additional Course' (Clause 2.6), with EVC."
+    remedy: "Apply for the approved intake only. To increase intake, use the 'Increase in Intake' application."
   - id: LEDGER-IDENTITY
     title: "Institution matches the record held by AICTE"
     type: ledger_identity
     params: {threshold: 85}
     severity: medium
     cite: {ref: "Clause 2.3.1 (a)", quote: "The existing Institutions using their Login credentials shall enter/ edit data as required and shall submit"}
-    remedy: "Name/Trust differ from AICTE records; a name change needs a separate 'Change in the Name of the Institution' application (Chapter II, item xv)."
+    remedy: "Use the name on your AICTE record. A name change needs its own application."
 
   # ---------------------------------------------------------------- added after testing on real documents
   - id: VAL-OC-PARTIAL
@@ -226,7 +226,7 @@ rules:
     params: {max_academic_years: 2}
     severity: medium
     cite: {ref: "Annexure-3, 3.1 (c)", quote: "In case of partial/ provisional Occupancy Certificate issued by the"}
-    remedy: "Obtain the full occupancy certificate; a partial one is accepted for two consecutive academic years only."
+    remedy: "Get the full occupancy certificate from your municipal authority and upload it."
   - id: DISC-ANNEX18
     title: "Mandatory disclosure has the required items"
     type: disclosure_items
@@ -234,4 +234,4 @@ rules:
     params: {}
     severity: medium
     cite: {ref: "Annexure-18", quote: "LoA/EoA letters (since inception) should form part of the mandatory disclosure and complete mandatory"}
-    remedy: "Add the missing items to the disclosure on the institution website."
+    remedy: "Add the missing items to the mandatory disclosure on your website."

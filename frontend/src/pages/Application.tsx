@@ -23,10 +23,10 @@ function evidenceMarks(f: any, docId: string): Mark[] {
   }))
 }
 
-function FindingBody({ f, onRule }: { f: any; onRule?: (c: any) => void }) {
+function FindingBody({ f, onRule, hideFix }: { f: any; onRule?: (c: any) => void; hideFix?: boolean }) {
   return <>
     <div>{f.detail}</div>
-    {f.remedy && f.status !== 'pass' && <><div className="k">What fixes it</div><div>{f.remedy}</div></>}
+    {f.remedy && f.status !== 'pass' && !hideFix && <div className="fix"><b>How to fix:</b><span>{f.remedy}</span></div>}
     {f.derivation && <details style={{ marginTop: 8 }}><summary className="small">How the requirement was worked out</summary><div className="calc">{f.derivation.join('\n')}</div></details>}
     {f.citation?.ref && <div className="k">Rule: {f.citation.ref} {onRule && f.citation.loc && <button className="btn sm" style={{ marginLeft: 6 }} onClick={() => onRule(f.citation)}>Open in handbook</button>}</div>}
   </>
@@ -105,10 +105,11 @@ export default function Application() {
         onClick={() => setOpen(on ? null : f.id)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(on ? null : f.id) } }}>
         <span className={`n ${f.kind === 'network' && f.status === 'fail' ? 'violet' : resultColor(f.status)}`}>{n}</span>
         <span className="t1">{f.title}</span>
-        <span className="side small faint">{onDocName ? docTitle(onDocName.doc_type) : f.kind === 'network' ? 'Other institutions' : 'Application'}<span className="chev">›</span></span>
+        <span className="side small faint">{onDocName ? docTitle(onDocName.declared_type || onDocName.doc_type) : f.kind === 'network' ? 'Other institutions' : 'Application'}<span className="chev">›</span></span>
+        {!staff && f.remedy && f.status !== 'pass' && <div className="fix"><b>How to fix:</b><span>{f.remedy}</span></div>}
       </div>
       {on && <div className="detail">
-        <FindingBody f={f} onRule={setCite} />
+        <FindingBody f={f} onRule={setCite} hideFix={!staff} />
         <div className="row" style={{ marginTop: 10 }}>
           {hasDoc && <button className="btn sm primary" onClick={() => showOnDoc(f)}>Show on document</button>}
           {f.kind === 'network' && <Link className="btn sm" to="/network">See the link</Link>}

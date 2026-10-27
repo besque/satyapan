@@ -65,7 +65,7 @@ def _tile(lat, lon, zoom=16):
             if not p.exists():
                 try:
                     r = requests.get(f"https://tile.openstreetmap.org/{zoom}/{x0 + dx}/{y0 + dy}.png",
-                                     headers={"User-Agent": "SatyapanPrototype/0.1 (SIH research prototype)"}, timeout=20)
+                                     headers={"User-Agent": "Satyapan/1.0 (document verification)"}, timeout=20)
                     if r.status_code == 200:
                         p.write_bytes(r.content)
                 except Exception:  # noqa: BLE001
@@ -510,6 +510,28 @@ def _doc_truth(s: dict) -> dict:
     return out
 
 
+def write_faculty_fix(form: dict, fx: Path, rnd: random.Random) -> Path:
+    """Updated faculty list = current list + newly appointed faculty to meet the ratio (CSV, as an institution would upload)."""
+    import csv
+    fx.mkdir(exist_ok=True)
+    need = norms.faculty_requirement(form["courses"])["required"]
+    rows = [dict(f) for f in form["faculty"]]
+    state = form.get("state", "Telangana")
+    depts = [c["course"] for c in form["courses"]]
+    while len(rows) < need + 2:
+        f, sname, g = _person(rnd, state if state in N.SURNAMES else "Telangana")
+        rows.append({"faculty_id": f"1-{rnd.randint(4_000_000_000, 9_999_999_999)}", "name": f"{f} {sname}", "gender": g,
+                     "dob": date(rnd.randint(1985, 1997), rnd.randint(1, 12), rnd.randint(1, 28)).isoformat(), "pan": _pan(rnd),
+                     "designation": "Assistant Professor", "qualification": "M.Tech", "department": depts[len(rows) % len(depts)],
+                     "date_of_joining": "2026-10-15"})
+    cols = ["name", "faculty_id", "designation", "qualification", "department", "date_of_joining", "dob", "pan", "gender"]
+    path = fx / "faculty__faculty_list_updated.csv"
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
+        w.writeheader(); w.writerows(rows)
+    return path
+
+
 def _demo_fixes(s: dict, out: Path, rnd: random.Random) -> None:
     """Corrected documents an institution would upload after a pre-check (renewed NOC, missing map)."""
     codes = {t["code"]: t for t in s["truth"]}
@@ -524,6 +546,8 @@ def _demo_fixes(s: dict, out: Path, rnd: random.Random) -> None:
         (fx / "fire_noc__fire_noc_renewed.pdf").write_bytes(render.fire_noc(f))
         registry.put(f"fire_{st.lower()}", f["noc_no"], {"premises": f["premises"], "address": f["address"], "applicant": f["applicant"],
                                                         "issue_date": f["issue_date"].isoformat(), "valid_until": f["valid_until"].isoformat(), "status": "ACTIVE"})
+    if "FSR_SHORTFALL" in codes:
+        write_faculty_fix(s["form"], fx, rnd)
     if codes.get("MISSING_DOC", {}).get("doc") == "satellite_map":
         fx.mkdir(exist_ok=True)
         m = {"institution": s["institution"]["name"], "lat": s["institution"]["lat"], "lon": s["institution"]["lon"], "address": s["institution"]["address"]}
