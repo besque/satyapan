@@ -34,6 +34,17 @@ button { font: inherit; cursor: pointer; }
 .nav a { color: var(--head-ink); text-decoration: none; padding: 10px 14px; font-weight: 500; border-bottom: 3px solid transparent; }
 .nav a:hover { background: rgba(255,255,255,.08); }
 .nav a.active { border-bottom-color: var(--accent); background: rgba(255,255,255,.1); }
+.morebtn { background: none; border: 0; border-bottom: 3px solid transparent; color: var(--head-ink); font: inherit; font-weight: 500; padding: 10px 14px; cursor: pointer; margin-left: auto; }
+.morebtn:hover { background: rgba(255,255,255,.08); }
+.morebtn.active { background: rgba(255,255,255,.1); }
+.morebtn:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
+.subnav { background: #f1f1ee; border-bottom: 1px solid var(--line, #d9d9d4); }
+.subnav .in { max-width: 1320px; margin: 0 auto; padding: 0 20px; display: flex; gap: 2px; flex-wrap: wrap; }
+.subnav a { color: var(--ink, #222); text-decoration: none; padding: 8px 14px; font-size: 14px; border-bottom: 3px solid transparent; }
+.subnav a:hover { background: rgba(0,0,0,.05); }
+.subnav a.active { border-bottom-color: var(--accent); font-weight: 600; }
+@media (min-width: 1700px) { .subnav .in { max-width: 1560px; } }
+@media (max-width: 700px) { .subnav .in { padding: 0 8px; } .subnav a { padding: 8px 10px; } }
 .page { max-width: 1320px; margin: 0 auto; padding: 18px 20px 60px; }
 .crumbs { font-size: 12.5px; color: var(--ink-2); margin-bottom: 6px; }
 .titlebar { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }

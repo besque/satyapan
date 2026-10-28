@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api, getToken, setToken, type User } from './api'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -34,6 +34,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [ready, setReady] = useState(false)
   const nav = useNavigate()
+  const { pathname } = useLocation()
+  const [more, setMore] = useState(false)
+  const moreOpen = more || ['/verifications', '/eoa', '/ledger', '/rules', '/audit', '/evaluation'].some((p) => pathname.startsWith(p))
   useEffect(() => {
     const as = new URLSearchParams(window.location.search).get('as')
     if (as) {
@@ -55,18 +58,21 @@ export default function App() {
         {staff ? <>
           <NavLink to="/" end>Applications</NavLink>
           <NavLink to="/network">Links between institutions</NavLink>
-          <NavLink to="/verifications">Issuer checks</NavLink>
-          <NavLink to="/eoa">Check an approval letter</NavLink>
-          <NavLink to="/ledger">Institution records</NavLink>
-          <NavLink to="/rules">Rules</NavLink>
-          <NavLink to="/audit">Activity log</NavLink>
-          <NavLink to="/evaluation">Test results</NavLink>
+          <button className={`morebtn ${moreOpen ? 'active' : ''}`} onClick={() => setMore(!more)} aria-expanded={moreOpen}>More ▾</button>
         </> : <>
           <NavLink to="/my">My applications</NavLink>
           <NavLink to="/precheck">Check before submitting</NavLink>
           <NavLink to="/rules">What is checked</NavLink>
         </>}
       </div></nav>
+      {staff && moreOpen && <div className="subnav"><div className="in">
+        <NavLink to="/verifications">Issuer checks</NavLink>
+        <NavLink to="/eoa">Check an approval letter</NavLink>
+        <NavLink to="/ledger">Institution records</NavLink>
+        <NavLink to="/rules">Rules</NavLink>
+        <NavLink to="/audit">Activity log</NavLink>
+        <NavLink to="/evaluation">Test results</NavLink>
+      </div></div>}
       <main className="page">
         <Routes>
           {staff ? <>
