@@ -3,18 +3,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
-RAW = DATA / "raw"
-APH_PDF = RAW / "aph" / "APH_2024_27.pdf"
-EOA_DIR = RAW / "eoa"
-STORE = DATA / "store"          # uploaded documents, content-addressed by sha256
-RENDER = DATA / "render"        # cached page renders
-DB_PATH = Path(os.environ.get("SATYAPAN_DB", DATA / "satyapan.sqlite"))
-SYNTH = DATA / "synthetic"
-RULES_DIR = Path(__file__).resolve().parent / "rules"
+MODELS = DATA / "models"          # local copy of the language model (downloaded once)
+DB_PATH = Path(os.environ.get("SAMANVAY_DB", DATA / "samanvay.sqlite"))
+SETTINGS_YAML = Path(__file__).resolve().parent / "settings.yaml"
+EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
-for p in (STORE, RENDER, SYNTH):
+for p in (DATA, MODELS):
     p.mkdir(parents=True, exist_ok=True)
-
-RENDER_DPI = 110
-
-ISSUERS_PATH = Path(os.environ.get("SATYAPAN_ISSUERS", DATA / "issuers.sqlite"))

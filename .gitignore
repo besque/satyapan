@@ -5,21 +5,6 @@ frontend/dist/
 __pycache__/
 *.pyc
 
-# generated / downloaded data (recreate with the scripts in scripts/)
-data/raw/
-data/synthetic/
-data/samples/
-data/eval/
-data/store/
-data/render/
-data/scratch/
-data/*.sqlite*
-data/*.log
-
-# test PKI private keys - never commit
-data/test_pki/
-
-# keep small derived results that the app reads
-!data/generator_profiles.json
-!data/corpus_stats.json
+# generated / downloaded data (recreate with scripts/seed.py; the model downloads on first run)
+data/*
 !data/eval_report.json

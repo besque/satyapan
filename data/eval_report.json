@@ -1,363 +1,402 @@
 {
- "generated_at": "2026-10-24T21:10:00+00:00",
- "synthetic": {
-  "applications": 36,
-  "planted_defects": 56,
-  "clean_applications": 7,
-  "clean_with_unexplained_alert": 0,
-  "per_defect": [
-   {
-    "code": "CADRE_SHORTFALL",
-    "label": "Cadre ratio shortfall",
-    "planted": 2,
-    "detected": 2,
-    "recall": 1.0,
-    "detected_by": {
-     "NORM-CADRE": 2
-    }
-   },
-   {
-    "code": "DOC_REUSE",
-    "label": "Another institution's NOC re-used",
-    "planted": 3,
-    "detected": 3,
-    "recall": 1.0,
-    "detected_by": {
-     "NET-REF_FIRE_NOC": 3
-    }
-   },
-   {
-    "code": "ESTAMP_NOT_FOUND",
-    "label": "e-stamp not in SHCIL register",
-    "planted": 2,
-    "detected": 2,
-    "recall": 1.0,
-    "detected_by": {
-     "VER-ESTAMP_REGISTRY": 2
-    }
-   },
-   {
-    "code": "ESTAMP_REUSE",
-    "label": "e-stamp re-used",
-    "planted": 3,
-    "detected": 3,
-    "recall": 1.0,
-    "detected_by": {
-     "NET-REF_AFFIDAVIT_2": 3
-    }
-   },
-   {
-    "code": "FIRE_EXPIRED",
-    "label": "Expired fire NOC",
-    "planted": 2,
-    "detected": 2,
-    "recall": 1.0,
-    "detected_by": {
-     "VAL-FIRE": 2,
-     "VER-FIRE_NOC_REGISTRY": 2
-    }
-   },
-   {
-    "code": "FSR_SHORTFALL",
-    "label": "Faculty:student ratio shortfall",
-    "planted": 4,
-    "detected": 4,
-    "recall": 1.0,
-    "detected_by": {
-     "NORM-FSR": 4
-    }
-   },
-   {
-    "code": "GHOST_FACULTY",
-    "label": "Faculty on two rosters",
-    "planted": 2,
-    "detected": 2,
-    "recall": 1.0,
-    "detected_by": {
-     "NET-FACULTY": 2
-    }
-   },
-   {
-    "code": "INTAKE_EXCEEDS",
-    "label": "Intake above approved",
-    "planted": 2,
-    "detected": 2,
-    "recall": 1.0,
-    "detected_by": {
-     "LEDGER-INTAKE": 2
-    }
-   },
-   {
-    "code": "MISSING_DOC",
-    "label": "Required document missing",
-    "planted": 1,
-    "detected": 1,
-    "recall": 1.0,
-    "detected_by": {
-     "DOC-MAP": 1
-    }
-   },
-   {
-    "code": "NAME_MISMATCH",
-    "label": "Certificate in another name",
-    "planted": 3,
-    "detected": 3,
-    "recall": 1.0,
-    "detected_by": {
-     "XDOC-NAME-OC": 3,
-     "XDOC-TRUST-OC": 3
-    }
-   },
-   {
-    "code": "PHOTO_GPS_MISMATCH",
-    "label": "Photos geotagged elsewhere",
-    "planted": 3,
-    "detected": 3,
-    "recall": 1.0,
-    "detected_by": {
-     "FOR-GPS": 3
-    }
-   },
-   {
-    "code": "PHOTO_REUSE",
-    "label": "Photo re-used from another institution",
-    "planted": 3,
-    "detected": 3,
-    "recall": 1.0,
-    "detected_by": {
-     "NET-PHOTO": 3
-    }
-   },
-   {
-    "code": "REGISTRY_MISMATCH",
-    "label": "Document differs from issuer record",
-    "planted": 9,
-    "detected": 9,
-    "recall": 1.0,
-    "detected_by": {
-     "VER-ESTAMP_REGISTRY": 3,
-     "VER-FIRE_NOC_REGISTRY": 6,
-     "VER-OCCUPANCY_REGISTRY": 1
-    }
-   },
-   {
-    "code": "SIGNATURE_BROKEN",
-    "label": "Edited after DSC signing",
-    "planted": 3,
-    "detected": 3,
-    "recall": 1.0,
-    "detected_by": {
-     "VAL-DSC": 3,
-     "VER-DIGITAL_SIGNATURE": 3
-    }
-   },
-   {
-    "code": "SSC_EXPIRED",
-    "label": "Structural certificate > 5 years",
-    "planted": 3,
-    "detected": 3,
-    "recall": 1.0,
-    "detected_by": {
-     "VAL-SSC": 3
-    }
-   },
-   {
-    "code": "STAMP_VALUE_LOW",
-    "label": "e-stamp below Rs.100",
-    "planted": 2,
-    "detected": 2,
-    "recall": 1.0,
-    "detected_by": {
-     "VAL-STAMP": 2,
-     "VER-ESTAMP_REGISTRY": 1
-    }
-   },
-   {
-    "code": "TAMPER_RESAVE",
-    "label": "Value edited & re-saved",
-    "planted": 4,
-    "detected": 4,
-    "recall": 1.0,
-    "detected_by": {
-     "FOR-STRUCTURE": 3,
-     "FOR-EDITOR": 1
-    }
-   },
-   {
-    "code": "TAMPER_WHITEOUT",
-    "label": "Date white-boxed & retyped",
-    "planted": 2,
-    "detected": 2,
-    "recall": 1.0,
-    "detected_by": {
-     "FOR-WHITEOUT": 2,
-     "FOR-REVISION": 2
-    }
-   },
-   {
-    "code": "TER_UNDERPAID",
-    "label": "TER under-paid",
-    "planted": 1,
-    "detected": 1,
-    "recall": 1.0,
-    "detected_by": {
-     "NORM-TER": 1
-    }
-   },
-   {
-    "code": "UDIN_NOT_FOUND",
-    "label": "UDIN not registered",
-    "planted": 2,
-    "detected": 2,
-    "recall": 1.0,
-    "detected_by": {
-     "VER-ICAI_UDIN": 2
-    }
-   }
-  ],
-  "misses": [],
-  "unexplained_alerts": {
-   "NET-REF_AFFIDAVIT_2": 1
-  },
-  "lanes": [
-   {
-    "expected": "amber",
-    "got": "amber",
-    "n": 11
-   },
-   {
-    "expected": "green",
-    "got": "green",
-    "n": 7
-   },
-   {
-    "expected": "red",
-    "got": "red",
-    "n": 18
-   }
-  ],
-  "extraction": {
-   "text": {
-    "n": 466,
-    "ok": 452,
-    "accuracy": 0.97
-   },
-   "ocr": {
-    "n": 112,
-    "ok": 98,
-    "accuracy": 0.875
-   }
-  },
-  "avg_seconds": 19.9,
-  "wall_seconds": 831.3
+ "model": {
+  "backend": "model",
+  "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
  },
- "real": {
-  "genuine_letters_tested": 30,
-  "genuine_false_alarms": 0,
-  "attacks": {
-   "whiteout_incremental": {
-    "tested": 28,
-    "detected": 28,
-    "rate": 1.0
+ "institution_matching": {
+  "n": 315,
+  "overall": {
+   "auto_correct": 95.9,
+   "confirm_top_correct": 3.5,
+   "unmatched": 0.3,
+   "confirm_top_wrong": 0.3
+  },
+  "by_style": {
+   "full": {
+    "auto_correct": 40,
+    "confirm_top_correct": 2
    },
-   "redact_resave": {
-    "tested": 28,
-    "detected": 28,
-    "rate": 1.0
+   "city": {
+    "auto_correct": 40,
+    "confirm_top_correct": 2
+   },
+   "abbrev": {
+    "auto_correct": 40,
+    "confirm_top_correct": 2
+   },
+   "acronym": {
+    "auto_correct": 41,
+    "unmatched": 1
+   },
+   "misspelt": {
+    "auto_correct": 80,
+    "confirm_top_correct": 4
+   },
+   "lower": {
+    "auto_correct": 40,
+    "confirm_top_wrong": 1,
+    "confirm_top_correct": 1
+   },
+   "hindi": {
+    "auto_correct": 17
+   },
+   "former": {
+    "auto_correct": 4
    }
   },
-  "signals": {
-   "FOR-REVISION": 28,
-   "FOR-WHITEOUT": 28,
-   "FOR-STRUCTURE": 28
-  },
-  "corpus": {
-   "files": 84,
-   "producers": [
-    [
-     "Oracle BI Publisher 11.1.1.9.0",
-     49
-    ],
-    [
-     "Oracle Analytics Publisher",
-     20
-    ],
-    [
-     "iLovePDF",
-     7
-    ],
-    [
-     "PDFium",
-     3
-    ],
-    [
-     "cairo 1.18.0 (https://cairographics.org)",
-     2
-    ],
-    [
-     "Adobe Scan for Android 25.11.10-google-d",
-     1
-    ],
-    [
-     "GPL Ghostscript 9.52",
-     1
-    ],
-    [
-     "GPL Ghostscript 9.55.0",
-     1
-    ]
-   ],
-   "provenance": [
-    [
-     "original portal output",
-     69
-    ],
-    [
-     "re-processed by another tool",
-     14
-    ],
-    [
-     "scanned",
-     1
-    ]
-   ],
-   "revisions": [
-    [
-     "single revision",
-     80
-    ],
-    [
-     "edited after generation",
-     2
-    ],
-    [
-     "linearized (not an edit)",
-     2
-    ]
-   ],
-   "letters": 122,
-   "institutions": 73,
-   "course_rows": 1335,
-   "years": [
-    "2018-19",
-    "2019-20",
-    "2020-21",
-    "2021-22",
-    "2022-23",
-    "2023-24",
-    "2024-25",
-    "2025-26",
-    "2026-27"
-   ],
-   "cross_year": {
-    "checks": 420,
-    "issues": 0
+  "misses": [
+   {
+    "text": "sri vanadurga college hosur",
+    "truth": "Sri Vanadurga Institute of Technology",
+    "got": "Sri Vanadurga College of Engineering",
+    "outcome": "confirm_top_wrong",
+    "confidence": 0.985
+   },
+   {
+    "text": "MP Chennai",
+    "truth": "Marinatheeram Polytechnic",
+    "got": "Marinatheeram Polytechnic",
+    "outcome": "unmatched",
+    "confidence": 0.348
    }
-  },
-  "note": "Tampered copies change one approved-intake figure on page 1, as a forger raising intake would. Detection here is from file forensics alone; in the product the same letter is also checked against the AICTE record, which catches the change regardless."
+  ]
  },
- "assumption_manual_minutes": {
-  "value": 45,
-  "note": "Assumed time for an officer to scrutinise 7 documents + roster by hand; an assumption for comparison, not a measurement."
- }
+ "nature_of_complaint": {
+  "n": 26,
+  "top1": 73.1,
+  "top3": 92.3,
+  "rows": [
+   {
+    "expected": "Fee not refunded",
+    "got": "Fee not refunded",
+    "score": 0.591,
+    "ok": true,
+    "lang": "en",
+    "text": "Admission surrendered in the first week itself, still the institute has not paid back the 72,000 I deposited."
+   },
+   {
+    "expected": "Fee not refunded",
+    "got": "Fee not refunded",
+    "score": 0.713,
+    "ok": true,
+    "lang": "en",
+    "text": "Kindly help me get my money back, I left the course in September and the college says no refund."
+   },
+   {
+    "expected": "Fee not refunded",
+    "got": "Fee not refunded",
+    "score": 0.701,
+    "ok": true,
+    "lang": "hi",
+    "text": "सीट छोड़ने के तीन महीने बाद भी कॉलेज ने जमा किए पैसे नहीं लौटाए।"
+   },
+   {
+    "expected": "Original certificates withheld",
+    "got": "Exam, result or degree delay",
+    "score": 0.496,
+    "ok": false,
+    "lang": "en",
+    "text": "The principal says my mark sheets will be given only after I clear dues for the full course."
+   },
+   {
+    "expected": "Original certificates withheld",
+    "got": "Original certificates withheld",
+    "score": 0.686,
+    "ok": true,
+    "lang": "en",
+    "text": "I need my school leaving certificate and 12th marks card back from the college for a new job."
+   },
+   {
+    "expected": "Original certificates withheld",
+    "got": "Original certificates withheld",
+    "score": 0.403,
+    "ok": true,
+    "lang": "hi",
+    "text": "कॉलेज ने मेरी 12वीं की मार्कशीट रोक रखी है, नौकरी के लिए चाहिए।"
+   },
+   {
+    "expected": "Excess or capitation fee",
+    "got": "Scholarship or fee waiver not given",
+    "score": 0.554,
+    "ok": false,
+    "lang": "en",
+    "text": "Every student was told to pay 40,000 'lab development charges' on top of the approved fee."
+   },
+   {
+    "expected": "Excess or capitation fee",
+    "got": "Excess or capitation fee",
+    "score": 0.363,
+    "ok": true,
+    "lang": "en",
+    "text": "Seat was offered only if we paid 3 lakh in cash to the trust, apart from fees."
+   },
+   {
+    "expected": "Excess or capitation fee",
+    "got": "Scholarship or fee waiver not given",
+    "score": 0.608,
+    "ok": false,
+    "lang": "hi",
+    "text": "फीस के अलावा हर छात्र से 30 हजार नकद लिए गए, कोई रसीद नहीं।"
+   },
+   {
+    "expected": "Ragging",
+    "got": "Ragging",
+    "score": 0.444,
+    "ok": true,
+    "lang": "en",
+    "text": "Second-years shaved the heads of freshers and made them dance at midnight in the hostel."
+   },
+   {
+    "expected": "Ragging",
+    "got": "Ragging",
+    "score": 0.465,
+    "ok": true,
+    "lang": "en",
+    "text": "My brother is too scared to go back to the hostel because seniors hit him last week."
+   },
+   {
+    "expected": "Ragging",
+    "got": "Ragging",
+    "score": 0.663,
+    "ok": true,
+    "lang": "hi",
+    "text": "हॉस्टल में सीनियरों ने नए छात्रों को रात भर परेशान किया और पीटा।"
+   },
+   {
+    "expected": "Faculty salary or faculty on paper",
+    "got": "Faculty salary or faculty on paper",
+    "score": 0.725,
+    "ok": true,
+    "lang": "en",
+    "text": "Teachers have been working without pay since June and many have left."
+   },
+   {
+    "expected": "Faculty salary or faculty on paper",
+    "got": "Faculty salary or faculty on paper",
+    "score": 0.608,
+    "ok": true,
+    "lang": "en",
+    "text": "Names of professors on the college website are of people who left years ago; no one teaches us."
+   },
+   {
+    "expected": "Faculty salary or faculty on paper",
+    "got": "Faculty salary or faculty on paper",
+    "score": 0.62,
+    "ok": true,
+    "lang": "hi",
+    "text": "प्राध्यापकों का वेतन छह महीने से रुका हुआ है।"
+   },
+   {
+    "expected": "Labs, library or facilities lacking",
+    "got": "Labs, library or facilities lacking",
+    "score": 0.563,
+    "ok": true,
+    "lang": "en",
+    "text": "There is no computer centre, and the workshop machines have not worked for two years."
+   },
+   {
+    "expected": "Labs, library or facilities lacking",
+    "got": "Labs, library or facilities lacking",
+    "score": 0.616,
+    "ok": true,
+    "lang": "en",
+    "text": "The college runs from two floors of a shopping complex; there is no playground or hostel."
+   },
+   {
+    "expected": "Labs, library or facilities lacking",
+    "got": "Labs, library or facilities lacking",
+    "score": 0.803,
+    "ok": true,
+    "lang": "hi",
+    "text": "लैब में कोई उपकरण नहीं है, लाइब्रेरी में किताबें नहीं।"
+   },
+   {
+    "expected": "Unapproved course or excess admission",
+    "got": "Unapproved course or excess admission",
+    "score": 0.473,
+    "ok": true,
+    "lang": "en",
+    "text": "Sixty extra students were enrolled in mechanical beyond the sanctioned seats."
+   },
+   {
+    "expected": "Unapproved course or excess admission",
+    "got": "Exam, result or degree delay",
+    "score": 0.583,
+    "ok": false,
+    "lang": "en",
+    "text": "The diploma course we joined does not appear on the AICTE approved list."
+   },
+   {
+    "expected": "Scholarship or fee waiver not given",
+    "got": "Fee not refunded",
+    "score": 0.669,
+    "ok": false,
+    "lang": "en",
+    "text": "As an SC student my fee is paid by the state scheme, but the college still asks me to deposit the tuition."
+   },
+   {
+    "expected": "Scholarship or fee waiver not given",
+    "got": "Scholarship or fee waiver not given",
+    "score": 0.662,
+    "ok": true,
+    "lang": "en",
+    "text": "I got admission under the fee waiver quota but now they want full tuition."
+   },
+   {
+    "expected": "Exam, result or degree delay",
+    "got": "Original certificates withheld",
+    "score": 0.458,
+    "ok": false,
+    "lang": "en",
+    "text": "Our sixth semester marks have not come even after five months."
+   },
+   {
+    "expected": "Exam, result or degree delay",
+    "got": "Exam, result or degree delay",
+    "score": 0.788,
+    "ok": true,
+    "lang": "en",
+    "text": "Hall tickets were not issued by the college, so twenty of us missed the exam."
+   },
+   {
+    "expected": "Harassment or discrimination",
+    "got": "Harassment or discrimination",
+    "score": 0.516,
+    "ok": true,
+    "lang": "en",
+    "text": "The head of department keeps making remarks about my caste and threatens to fail me."
+   },
+   {
+    "expected": "Harassment or discrimination",
+    "got": "Fee not refunded",
+    "score": 0.47,
+    "ok": false,
+    "lang": "en",
+    "text": "I was thrown out of the hostel after I spoke to a newspaper about the fees."
+   }
+  ]
+ },
+ "same_matter": {
+  "threshold": 0.7,
+  "pairs": 16,
+  "precision": 100.0,
+  "recall": 75.0,
+  "cross_language_found": "4 of 4",
+  "rows": [
+   {
+    "truth": "same",
+    "score": 0.871,
+    "predicted_same": true,
+    "a": "I cancelled my MBA seat on 3 July; the refund of Rs 1,10,000 has not come.",
+    "b": "मैंने 3 जुलाई को एमबीए की सीट रद्द की थी, 1,10,000 रुपये की वापसी अब तक नहीं हुई।"
+   },
+   {
+    "truth": "same",
+    "score": 0.833,
+    "predicted_same": true,
+    "a": "The college has kept my 10th and 12th originals and asks Rs 50,000 to return them.",
+    "b": "कॉलेज मेरे 10वीं और 12वीं के मूल प्रमाणपत्र लौटाने के लिए 50,000 रुपये मांग रहा है।"
+   },
+   {
+    "truth": "same",
+    "score": 0.61,
+    "predicted_same": false,
+    "a": "Seniors beat my son in hostel block C on Saturday night.",
+    "b": "My son was assaulted by senior students in hostel C on the night of Saturday; he is in shock."
+   },
+   {
+    "truth": "same",
+    "score": 0.762,
+    "predicted_same": true,
+    "a": "Rs 25,000 bus fee is compulsory even for students who live next to the college.",
+    "b": "College forces every student, even day scholars living nearby, to pay 25,000 as transport fee."
+   },
+   {
+    "truth": "same",
+    "score": 0.78,
+    "predicted_same": true,
+    "a": "Salary of all teaching staff is pending from April.",
+    "b": "अप्रैल से सभी शिक्षकों का वेतन बकाया है।"
+   },
+   {
+    "truth": "same",
+    "score": 0.686,
+    "predicted_same": false,
+    "a": "No chemistry lab; practicals are just written in the record book.",
+    "b": "There is no chemistry laboratory at all and we only copy practicals into our records."
+   },
+   {
+    "truth": "same",
+    "score": 0.863,
+    "predicted_same": true,
+    "a": "My post-matric scholarship came to the college account but they still demand fees from me.",
+    "b": "छात्रवृत्ति कॉलेज के खाते में आ गई फिर भी कॉलेज मुझसे फीस मांग रहा है।"
+   },
+   {
+    "truth": "same",
+    "score": 0.71,
+    "predicted_same": true,
+    "a": "Semester results of Electrical branch from May are still not declared.",
+    "b": "Results of the May semester exam for the electrical students have not been announced yet."
+   },
+   {
+    "truth": "different",
+    "score": 0.0,
+    "predicted_same": false,
+    "a": "I cancelled my MBA seat on 3 July; the refund of Rs 1,10,000 has not come.",
+    "b": "Seniors beat my son in hostel block C on Saturday night."
+   },
+   {
+    "truth": "different",
+    "score": 0.0,
+    "predicted_same": false,
+    "a": "The college has kept my 10th and 12th originals and asks Rs 50,000 to return them.",
+    "b": "No chemistry lab; practicals are just written in the record book."
+   },
+   {
+    "truth": "different",
+    "score": 0.047,
+    "predicted_same": false,
+    "a": "Salary of all teaching staff is pending from April.",
+    "b": "My post-matric scholarship came to the college account but they still demand fees from me."
+   },
+   {
+    "truth": "different",
+    "score": 0.087,
+    "predicted_same": false,
+    "a": "Semester results of Electrical branch from May are still not declared.",
+    "b": "Rs 25,000 bus fee is compulsory even for students who live next to the college."
+   },
+   {
+    "truth": "different",
+    "score": 0.0,
+    "predicted_same": false,
+    "a": "The hostel warden threatens girls who complain about the food.",
+    "b": "Refund of caution deposit of Rs 10,000 not given after I finished the course."
+   },
+   {
+    "truth": "different",
+    "score": 0.104,
+    "predicted_same": false,
+    "a": "हॉस्टल में सीनियरों ने मारपीट की।",
+    "b": "कॉलेज मूल अंकतालिका वापस नहीं कर रहा।"
+   },
+   {
+    "truth": "different",
+    "score": 0.254,
+    "predicted_same": false,
+    "a": "No library books for third year.",
+    "b": "Three teachers resigned because they were not paid."
+   },
+   {
+    "truth": "different",
+    "score": 0.156,
+    "predicted_same": false,
+    "a": "Fee waiver denied though I am in the TFW list.",
+    "b": "Degree certificate not issued two years after passing."
+   }
+  ]
+ },
+ "seconds": 8.0,
+ "note": "All test inputs are synthetic and written for this test. Real complaints will be messier; these figures show behaviour, not field accuracy."
 }

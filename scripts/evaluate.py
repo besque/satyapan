@@ -1,215 +1,190 @@
-"""Evaluation harness -> data/eval_report.json (shown on the Evaluation screen).
+"""Measure the three automatic judgements on test inputs, and write data/eval_report.json.
 
-Part A  synthetic applications with randomly planted defects (fresh seed, isolated DB + registry):
-        detection rate per defect type, unexplained alerts, lane accuracy, field-extraction accuracy (text vs OCR)
-Part B  real public EoA letters: parser coverage, cross-year consistency, tamper detection on real letters
-        (two attack styles) and false alarms on the untouched originals.
-
-  python scripts/evaluate.py [--n 36] [--real 30]
+1. Institution matching: every institution written in the ways complainants write it (full name, with
+   city, abbreviated, acronym, misspelt, lower-case, Hindi, former name).
+2. Nature of complaint: complaints written for this test only (not the demo templates, not the
+   category descriptions in settings.yaml), in English and Hindi.
+3. Same matter: pairs of complaints about the same incident (re-worded, or in the other language)
+   against pairs about different matters at the same institution.
+All inputs are synthetic. Run after scripts/seed.py:  python scripts/evaluate.py
 """
 from __future__ import annotations
 
-import argparse
 import json
-import logging
-import os
-import re
+import random
 import sys
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-EVAL_DIR = ROOT / "data" / "eval"
-EVAL_DIR.mkdir(parents=True, exist_ok=True)
-os.environ["SATYAPAN_DB"] = str(EVAL_DIR / "eval.sqlite")
-os.environ["SATYAPAN_ISSUERS"] = str(EVAL_DIR / "eval_issuers.sqlite")
-for f in EVAL_DIR.glob("eval*.sqlite*"):
-    f.unlink()
-sys.path.insert(0, str(ROOT / "backend"))
-logging.disable(logging.CRITICAL)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from app import db, docmodel, pipeline  # noqa: E402
-from app.config import DATA, EOA_DIR  # noqa: E402
+from app import ai, db, demo, overlap, resolve, settings  # noqa: E402
+from app.config import DATA  # noqa: E402
 
-DETECTORS = {
-    "FIRE_EXPIRED": ["VAL-FIRE", "VER-FIRE_NOC_REGISTRY"], "TAMPER_WHITEOUT": ["FOR-WHITEOUT", "FOR-REVISION", "FOR-OVERLAP"],
-    "REGISTRY_MISMATCH": ["VER-FIRE_NOC_REGISTRY", "VER-OCCUPANCY_REGISTRY", "VER-ESTAMP_REGISTRY", "VER-ICAI_UDIN"],
-    "FSR_SHORTFALL": ["NORM-FSR"], "CADRE_SHORTFALL": ["NORM-CADRE"], "TER_UNDERPAID": ["NORM-TER"],
-    "MISSING_DOC": ["DOC-MAP", "DOC-SSC", "DOC-FIRE", "DOC-OC", "DOC-AFFIDAVIT", "DOC-TER", "DOC-AUDIT"],
-    "SSC_EXPIRED": ["VAL-SSC"], "STAMP_VALUE_LOW": ["VAL-STAMP", "VER-ESTAMP_REGISTRY"], "ESTAMP_NOT_FOUND": ["VER-ESTAMP_REGISTRY"],
-    "NAME_MISMATCH": ["XDOC-NAME-OC", "XDOC-TRUST-OC"], "TAMPER_RESAVE": ["FOR-STRUCTURE", "FOR-EDITOR", "FOR-REVISION", "FOR-OVERLAP"],
-    "INTAKE_EXCEEDS": ["LEDGER-INTAKE"], "SIGNATURE_BROKEN": ["VAL-DSC", "VER-DIGITAL_SIGNATURE"], "UDIN_NOT_FOUND": ["VER-ICAI_UDIN"],
-    "PHOTO_GPS_MISMATCH": ["FOR-GPS"], "GHOST_FACULTY": ["NET-FACULTY", "NET-FACULTY_ID", "NET-FACULTY_PAN"], "PHOTO_REUSE": ["NET-PHOTO"],
-    "DOC_REUSE": ["NET-REF_FIRE_NOC", "NET-DOC_SHA"], "ESTAMP_REUSE": ["NET-REF_AFFIDAVIT_2"],
-}
-# findings that a planted defect legitimately causes downstream (not false alarms)
-CONSEQUENCES = {
-    "INTAKE_EXCEEDS": ["NORM-FSR", "NORM-CADRE", "NORM-AREA", "NORM-TER", "XDOC-AREA-OC"],
-    "TAMPER_WHITEOUT": ["VAL-FIRE", "FOR-STRUCTURE"], "SIGNATURE_BROKEN": ["FOR-REVISION", "FOR-WHITEOUT", "FOR-OVERLAP", "FOR-STRUCTURE"],
-    "DOC_REUSE": ["VER-FIRE_NOC_REGISTRY", "VAL-FIRE", "VER-QR_PAYLOAD", "FOR-STRUCTURE"], "TAMPER_RESAVE": ["VER-QR_PAYLOAD", "XDOC-AREA-OC", "NORM-AREA"],
-    "FSR_SHORTFALL": ["NORM-CADRE"], "CADRE_SHORTFALL": [], "SSC_MISSING": [], "ESTAMP_REUSE": ["VER-ESTAMP_REGISTRY"],
-    "GHOST_FACULTY": [], "PHOTO_REUSE": [],
-}
-LABEL = {"FIRE_EXPIRED": "Expired fire NOC", "TAMPER_WHITEOUT": "Date white-boxed & retyped", "REGISTRY_MISMATCH": "Document differs from issuer record",
-         "FSR_SHORTFALL": "Faculty:student ratio shortfall", "CADRE_SHORTFALL": "Cadre ratio shortfall", "TER_UNDERPAID": "TER under-paid",
-         "MISSING_DOC": "Required document missing", "SSC_EXPIRED": "Structural certificate > 5 years", "STAMP_VALUE_LOW": "e-stamp below Rs.100",
-         "ESTAMP_NOT_FOUND": "e-stamp not in SHCIL register", "NAME_MISMATCH": "Certificate in another name",
-         "TAMPER_RESAVE": "Value edited & re-saved", "INTAKE_EXCEEDS": "Intake above approved", "SIGNATURE_BROKEN": "Edited after DSC signing",
-         "UDIN_NOT_FOUND": "UDIN not registered", "PHOTO_GPS_MISMATCH": "Photos geotagged elsewhere", "GHOST_FACULTY": "Faculty on two rosters",
-         "PHOTO_REUSE": "Photo re-used from another institution", "DOC_REUSE": "Another institution's NOC re-used", "ESTAMP_REUSE": "e-stamp re-used"}
-SERIOUS = {"TAMPER_WHITEOUT", "REGISTRY_MISMATCH", "TAMPER_RESAVE", "SIGNATURE_BROKEN", "UDIN_NOT_FOUND", "ESTAMP_NOT_FOUND",
-           "PHOTO_GPS_MISMATCH", "GHOST_FACULTY", "PHOTO_REUSE", "DOC_REUSE", "ESTAMP_REUSE"}
+CATEGORY_TESTS = [
+    ("fee_refund", "Admission surrendered in the first week itself, still the institute has not paid back the 72,000 I deposited."),
+    ("fee_refund", "Kindly help me get my money back, I left the course in September and the college says no refund."),
+    ("fee_refund", "सीट छोड़ने के तीन महीने बाद भी कॉलेज ने जमा किए पैसे नहीं लौटाए।"),
+    ("certificates_withheld", "The principal says my mark sheets will be given only after I clear dues for the full course."),
+    ("certificates_withheld", "I need my school leaving certificate and 12th marks card back from the college for a new job."),
+    ("certificates_withheld", "कॉलेज ने मेरी 12वीं की मार्कशीट रोक रखी है, नौकरी के लिए चाहिए।"),
+    ("excess_fee", "Every student was told to pay 40,000 'lab development charges' on top of the approved fee."),
+    ("excess_fee", "Seat was offered only if we paid 3 lakh in cash to the trust, apart from fees."),
+    ("excess_fee", "फीस के अलावा हर छात्र से 30 हजार नकद लिए गए, कोई रसीद नहीं।"),
+    ("ragging", "Second-years shaved the heads of freshers and made them dance at midnight in the hostel."),
+    ("ragging", "My brother is too scared to go back to the hostel because seniors hit him last week."),
+    ("ragging", "हॉस्टल में सीनियरों ने नए छात्रों को रात भर परेशान किया और पीटा।"),
+    ("faculty_issues", "Teachers have been working without pay since June and many have left."),
+    ("faculty_issues", "Names of professors on the college website are of people who left years ago; no one teaches us."),
+    ("faculty_issues", "प्राध्यापकों का वेतन छह महीने से रुका हुआ है।"),
+    ("infrastructure", "There is no computer centre, and the workshop machines have not worked for two years."),
+    ("infrastructure", "The college runs from two floors of a shopping complex; there is no playground or hostel."),
+    ("infrastructure", "लैब में कोई उपकरण नहीं है, लाइब्रेरी में किताबें नहीं।"),
+    ("unapproved_admission", "Sixty extra students were enrolled in mechanical beyond the sanctioned seats."),
+    ("unapproved_admission", "The diploma course we joined does not appear on the AICTE approved list."),
+    ("scholarship", "As an SC student my fee is paid by the state scheme, but the college still asks me to deposit the tuition."),
+    ("scholarship", "I got admission under the fee waiver quota but now they want full tuition."),
+    ("exam_result", "Our sixth semester marks have not come even after five months."),
+    ("exam_result", "Hall tickets were not issued by the college, so twenty of us missed the exam."),
+    ("harassment", "The head of department keeps making remarks about my caste and threatens to fail me."),
+    ("harassment", "I was thrown out of the hostel after I spoke to a newspaper about the fees."),
+]
+
+SAME_PAIRS = [  # (category, text A, text B): same incident, different wording or language
+    ("fee_refund", "I cancelled my MBA seat on 3 July; the refund of Rs 1,10,000 has not come.",
+     "मैंने 3 जुलाई को एमबीए की सीट रद्द की थी, 1,10,000 रुपये की वापसी अब तक नहीं हुई।"),
+    ("certificates_withheld", "The college has kept my 10th and 12th originals and asks Rs 50,000 to return them.",
+     "कॉलेज मेरे 10वीं और 12वीं के मूल प्रमाणपत्र लौटाने के लिए 50,000 रुपये मांग रहा है।"),
+    ("ragging", "Seniors beat my son in hostel block C on Saturday night.",
+     "My son was assaulted by senior students in hostel C on the night of Saturday; he is in shock."),
+    ("excess_fee", "Rs 25,000 bus fee is compulsory even for students who live next to the college.",
+     "College forces every student, even day scholars living nearby, to pay 25,000 as transport fee."),
+    ("faculty_issues", "Salary of all teaching staff is pending from April.",
+     "अप्रैल से सभी शिक्षकों का वेतन बकाया है।"),
+    ("infrastructure", "No chemistry lab; practicals are just written in the record book.",
+     "There is no chemistry laboratory at all and we only copy practicals into our records."),
+    ("scholarship", "My post-matric scholarship came to the college account but they still demand fees from me.",
+     "छात्रवृत्ति कॉलेज के खाते में आ गई फिर भी कॉलेज मुझसे फीस मांग रहा है।"),
+    ("exam_result", "Semester results of Electrical branch from May are still not declared.",
+     "Results of the May semester exam for the electrical students have not been announced yet."),
+]
+
+DIFFERENT_PAIRS = [  # same institution, different matters
+    ("fee_refund", "I cancelled my MBA seat on 3 July; the refund of Rs 1,10,000 has not come.",
+     "ragging", "Seniors beat my son in hostel block C on Saturday night."),
+    ("certificates_withheld", "The college has kept my 10th and 12th originals and asks Rs 50,000 to return them.",
+     "infrastructure", "No chemistry lab; practicals are just written in the record book."),
+    ("faculty_issues", "Salary of all teaching staff is pending from April.",
+     "scholarship", "My post-matric scholarship came to the college account but they still demand fees from me."),
+    ("exam_result", "Semester results of Electrical branch from May are still not declared.",
+     "excess_fee", "Rs 25,000 bus fee is compulsory even for students who live next to the college."),
+    ("harassment", "The hostel warden threatens girls who complain about the food.",
+     "fee_refund", "Refund of caution deposit of Rs 10,000 not given after I finished the course."),
+    ("ragging", "हॉस्टल में सीनियरों ने मारपीट की।", "certificates_withheld", "कॉलेज मूल अंकतालिका वापस नहीं कर रहा।"),
+    ("infrastructure", "No library books for third year.", "faculty_issues", "Three teachers resigned because they were not paid."),
+    ("scholarship", "Fee waiver denied though I am in the TFW list.", "exam_result", "Degree certificate not issued two years after passing."),
+]
 
 
-def norm_val(v):
-    if v is None:
-        return None
-    s = str(v).strip()
-    try:
-        return round(float(s.replace(",", "")), 1)
-    except ValueError:
-        return re.sub(r"\s+", " ", s).upper().replace(" ", "")
-
-
-def part_a(n: int) -> dict:
-    from app.synth import generate
-    from app.verify import registry
-    root = DATA / "synthetic" / "eval"
-    t0 = time.time()
-    m = generate.generate("random", n=n, seed=4242, out_root=root)
-    registry.set_available("fire_tn", True)
-    # ledger copy of the real corpus isn't needed for synthetic institutions (their record comes with the set)
-    ids = pipeline.import_synthetic(root, actor="eval")
-    gen_secs = time.time() - t0
-    per = defaultdict(lambda: {"planted": 0, "detected": 0, "by": Counter()})
-    unexplained, lanes, clean_unexplained, n_clean = Counter(), Counter(), 0, 0
-    ext = defaultdict(lambda: {"n": 0, "ok": 0})
-    misses = []
-    for a, aid in zip(m["applications"], ids):
-        fails = db.q("SELECT rule_id, kind, severity FROM findings WHERE application_id=? AND status='fail'", (aid,))
-        rules = {f["rule_id"] for f in fails}
-        codes = [t["code"] for t in a["truth"]]
-        explained = set()
-        for t in a["truth"]:
-            c = t["code"]
-            det = [r for r in DETECTORS.get(c, []) if r in rules]
-            if c == "MISSING_DOC":
-                want = {"satellite_map": "DOC-MAP", "structural_stability": "DOC-SSC"}.get(t["doc"])
-                det = [want] if want in rules else []
-            per[c]["planted"] += 1
-            if det:
-                per[c]["detected"] += 1
-                per[c]["by"].update(det)
+def institution_matching(rng):
+    insts = demo.institutions(random.Random(7))   # same institutions as the seeded master
+    master = {r["name"]: r["permanent_id"] for r in db.q("SELECT name, permanent_id FROM institutions")}
+    per_style = defaultdict(Counter)
+    examples = []
+    for inst in insts:
+        styles = ["full", "city", "abbrev", "acronym", "misspelt", "misspelt", "lower"]
+        if inst["state"] in demo.HINDI_STATES:
+            styles.append("hindi")
+        if inst["aliases"]:
+            styles.append("former")
+        for st in styles:
+            text = demo.mention(inst, st, rng)
+            r = resolve.resolve(text, "")
+            truth = master[inst["name"]]
+            top = r["candidates"][0]["permanent_id"] if r["candidates"] else None
+            if r["state"] == "auto":
+                outcome = "auto_correct" if r["permanent_id"] == truth else "auto_wrong"
+            elif r["state"] == "confirm":
+                outcome = "confirm_top_correct" if top == truth else "confirm_top_wrong"
             else:
-                misses.append({"app": a["dir"], "code": c, "detail": t["detail"]})
-            explained |= set(DETECTORS.get(c, [])) | set(CONSEQUENCES.get(c, []))
-        stray = [r for r in rules if r not in explained]
-        unexplained.update(stray)
-        if not codes:
-            n_clean += 1
-            clean_unexplained += bool(stray)
-        exp_lane = "red" if any(c in SERIOUS for c in codes) else ("amber" if codes else "green")
-        got = db.q1("SELECT lane FROM applications WHERE id=?", (aid,))["lane"]
-        lanes[(exp_lane, got)] += 1
-        # extraction accuracy against values printed on the documents
-        docs = {d["doc_type"]: d for d in db.q("SELECT doc_type, extraction, forensics FROM documents WHERE application_id=?", (aid,))}
-        for dt, fields in a.get("doc_truth", {}).items():
-            d = docs.get(dt)
-            if not d:
-                continue
-            exd, fx = db.unj(d["extraction"], {}), db.unj(d["forensics"], {})
-            mode = "ocr" if fx.get("ocr_pages") else "text"
-            for fname, truth in fields.items():
-                key = {"estamp_no": "estamp_cert_no", "engineer_reg": "engineer_reg_no"}.get(fname, fname)
-                got_v = (exd.get(key) or {}).get("value") if isinstance(exd.get(key), dict) else None
-                ext[mode]["n"] += 1
-                tv, gv = norm_val(truth), norm_val(got_v)
-                if isinstance(tv, str) and isinstance(gv, str) and len(tv) >= 10 and key in ("premises", "first_party", "owner"):
-                    ok = tv == gv
-                else:
-                    ok = tv == gv
-                ext[mode]["ok"] += int(ok)
-    secs = [db.unj(r["summary"], {}).get("seconds") for r in db.q("SELECT summary FROM applications")]
-    secs = [s for s in secs if s]
-    return {
-        "applications": len(ids), "planted_defects": sum(v["planted"] for v in per.values()),
-        "clean_applications": n_clean, "clean_with_unexplained_alert": clean_unexplained,
-        "per_defect": sorted([{"code": c, "label": LABEL.get(c, c), "planted": v["planted"], "detected": v["detected"],
-                               "recall": round(v["detected"] / v["planted"], 3), "detected_by": dict(v["by"])} for c, v in per.items()],
-                             key=lambda x: (x["recall"], x["code"])),
-        "misses": misses[:30], "unexplained_alerts": dict(unexplained.most_common()),
-        "lanes": [{"expected": e, "got": g, "n": n_} for (e, g), n_ in sorted(lanes.items())],
-        "extraction": {k: {**v, "accuracy": round(v["ok"] / v["n"], 3) if v["n"] else None} for k, v in ext.items()},
-        "avg_seconds": round(sum(secs) / len(secs), 1) if secs else None, "wall_seconds": round(gen_secs, 1),
-    }
+                outcome = "unmatched"
+            per_style[st][outcome] += 1
+            if outcome in ("auto_wrong", "confirm_top_wrong", "unmatched") and len(examples) < 12:
+                examples.append({"text": text, "truth": inst["name"], "got": r["candidates"][0]["name"] if r["candidates"] else None,
+                                 "outcome": outcome, "confidence": r["confidence"]})
+    total = Counter()
+    for c in per_style.values():
+        total.update(c)
+    n = sum(total.values())
+    return {"n": n, "overall": {k: round(100 * v / n, 1) for k, v in total.items()},
+            "by_style": {s: dict(c) for s, c in per_style.items()}, "misses": examples}
 
 
-def part_b(n_real: int) -> dict:
-    """Real public EoA letters: tamper detection and false alarms on genuine originals."""
-    import pymupdf
-    from app.forensics import pdf as FP
-    sys.path.insert(0, str(ROOT / "scripts"))
-    from make_eoa_samples import _redact_cell, _whiteout_cell, course_intake
-
-    gens = {"Oracle BI Publisher 11.1.1.9.0", "Oracle Analytics Publisher"}
-    picks = []
-    for f in sorted(EOA_DIR.glob("*.pdf")):
-        raw = f.read_bytes()
-        d = pymupdf.open(stream=raw, filetype="pdf")
-        if (d.metadata or {}).get("producer") in gens and d.page_count <= 8 and len(FP.revisions(raw)["revisions"]) == 1:
-            picks.append((f, raw))
-    picks = picks[:n_real]
-
-    def alerts(raw: bytes) -> list[str]:
-        doc = docmodel.load(Path("x.pdf"), data=raw, allow_ocr=False)
-        fx = FP.analyse(doc)
-        return [x["rule_id"] for x in pipeline.forensic_findings({"id": "x", "mime": "application/pdf", "doc_type": "eoa_letter", "forensics": fx}, {"form": {}})]
-
-    genuine_flagged, att = 0, {"whiteout_incremental": [0, 0], "redact_resave": [0, 0]}
-    by_signal = Counter()
-    for f, raw in picks:
-        a = alerts(raw)
-        genuine_flagged += bool(a)
-        hit = course_intake(raw)
-        if not hit:
-            continue
-        _, old, new = hit
-        for name, fn in (("whiteout_incremental", _whiteout_cell), ("redact_resave", _redact_cell)):
-            try:
-                t = fn(raw, old, new)
-            except Exception:  # noqa: BLE001
-                continue
-            r = alerts(t)
-            att[name][0] += 1
-            att[name][1] += bool(r)
-            by_signal.update(set(r))
-    stats = json.loads((DATA / "corpus_stats.json").read_text("utf-8")) if (DATA / "corpus_stats.json").exists() else {}
-    return {"genuine_letters_tested": len(picks), "genuine_false_alarms": genuine_flagged,
-            "attacks": {k: {"tested": v[0], "detected": v[1], "rate": round(v[1] / v[0], 3) if v[0] else None} for k, v in att.items()},
-            "signals": dict(by_signal), "corpus": stats,
-            "note": "Tampered copies change one approved-intake figure on page 1, as a forger raising intake would. Detection here is from "
-                    "file forensics alone; in the product the same letter is also checked against the AICTE record, which catches the change regardless."}
+def categories():
+    rows, top1, top3 = [], 0, 0
+    for cat, text in CATEGORY_TESTS:
+        r = ai.classify(text)
+        ok1, ok3 = r[0]["category"] == cat, cat in [x["category"] for x in r]
+        top1 += ok1
+        top3 += ok3
+        rows.append({"expected": settings.category(cat)["label"], "got": r[0]["label"], "score": r[0]["score"], "ok": ok1,
+                     "lang": "hi" if any("ऀ" <= ch <= "ॿ" for ch in text) else "en", "text": text})
+    n = len(CATEGORY_TESTS)
+    return {"n": n, "top1": round(100 * top1 / n, 1), "top3": round(100 * top3 / n, 1), "rows": rows}
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=36)
-    ap.add_argument("--real", type=int, default=30)
-    args = ap.parse_args()
-    a = part_a(args.n)
-    print(json.dumps({k: a[k] for k in ("applications", "planted_defects", "clean_applications", "clean_with_unexplained_alert", "extraction", "avg_seconds")}, indent=1))
-    for x in a["per_defect"]:
-        print(f"  {x['code']:20} {x['detected']}/{x['planted']}")
-    print("  unexplained:", a["unexplained_alerts"])
-    b = part_b(args.real)
-    print(json.dumps({k: b[k] for k in ("genuine_letters_tested", "genuine_false_alarms", "attacks", "signals")}, indent=1))
-    rep = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "synthetic": a, "real": b,
-           "assumption_manual_minutes": {"value": 45, "note": "Assumed time for an officer to scrutinise 7 documents + roster by hand; "
-                                         "an assumption for comparison, not a measurement."}}
-    (DATA / "eval_report.json").write_text(json.dumps(rep, indent=1, default=str), "utf-8")
-    print("wrote", DATA / "eval_report.json")
+def same_matter():
+    thr = settings.get()["matching"]["same_matter"]
+
+    def case(cat, text, i):
+        return {"id": f"t{i}", "subject": "", "description": text, "category": cat, "category_ai": ai.classify(text),
+                "lang": "hi" if any("ऀ" <= ch <= "ॿ" for ch in text) else "en", "received_on": "2026-09-01",
+                "contact_hash": None, "complainant": None}
+    rows = []
+    for i, (cat, a, b) in enumerate(SAME_PAIRS):
+        x, y = case(cat, a, 2 * i), case(cat, b, 2 * i + 1)
+        x["category"], y["category"] = x["category_ai"][0]["category"], y["category_ai"][0]["category"]
+        v = ai.embed([a, b])
+        pm = overlap.same_matter(x, y, v[0], v[1], {})
+        rows.append({"truth": "same", "score": pm["score"], "predicted_same": pm["same"], "a": a, "b": b})
+    for i, (ca, a, cb, b) in enumerate(DIFFERENT_PAIRS):
+        x, y = case(ca, a, 100 + 2 * i), case(cb, b, 101 + 2 * i)
+        x["category"], y["category"] = x["category_ai"][0]["category"], y["category_ai"][0]["category"]
+        v = ai.embed([a, b])
+        pm = overlap.same_matter(x, y, v[0], v[1], {})
+        rows.append({"truth": "different", "score": pm["score"], "predicted_same": pm["same"], "a": a, "b": b})
+    tp = sum(r["truth"] == "same" and r["predicted_same"] for r in rows)
+    fp = sum(r["truth"] == "different" and r["predicted_same"] for r in rows)
+    fn = sum(r["truth"] == "same" and not r["predicted_same"] for r in rows)
+    cross = [r for r in rows if r["truth"] == "same" and any("ऀ" <= ch <= "ॿ" for ch in r["b"])]
+    return {"threshold": thr, "pairs": len(rows), "precision": round(100 * tp / max(1, tp + fp), 1),
+            "recall": round(100 * tp / max(1, tp + fn), 1),
+            "cross_language_found": f"{sum(r['predicted_same'] for r in cross)} of {len(cross)}", "rows": rows}
+
+
+def main():
+    t = time.time()
+    rng = random.Random(99)
+    rep = {"model": ai.backend(), "institution_matching": institution_matching(rng), "nature_of_complaint": categories(),
+           "same_matter": same_matter(), "seconds": None,
+           "note": "All test inputs are synthetic and written for this test. Real complaints will be messier; "
+                   "these figures show behaviour, not field accuracy."}
+    rep["seconds"] = round(time.time() - t, 1)
+    (DATA / "eval_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
+    im = rep["institution_matching"]
+    print("institution matching", im["n"], im["overall"])
+    print("nature", rep["nature_of_complaint"]["top1"], rep["nature_of_complaint"]["top3"])
+    sm = rep["same_matter"]
+    print("same matter P/R", sm["precision"], sm["recall"], "cross-language", sm["cross_language_found"])
+    for m in im["misses"]:
+        print("  miss", m)
+    for r in rep["nature_of_complaint"]["rows"]:
+        if not r["ok"]:
+            print("  cat", r["expected"], "->", r["got"], r["score"], r["text"][:60])
+    for r in sm["rows"]:
+        if r["predicted_same"] != (r["truth"] == "same"):
+            print("  pair", r["truth"], r["score"], r["a"][:40], "|", r["b"][:40])
 
 
 if __name__ == "__main__":

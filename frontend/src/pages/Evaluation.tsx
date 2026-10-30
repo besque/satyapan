@@ -1,48 +1,50 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { Tip } from '../ui'
 
-const pct = (x: number | null | undefined) => (x == null ? '—' : `${Math.round(x * 100)}%`)
+const OUT: Record<string, string> = {
+  auto_correct: 'Linked automatically, correct', auto_wrong: 'Linked automatically, wrong', confirm_top_correct: 'Sent to officer; right one suggested first',
+  confirm_top_wrong: 'Sent to officer; right one not first', unmatched: 'Not found',
+}
+const STYLE: Record<string, string> = {
+  full: 'Full name', city: 'Name and city', abbrev: 'Abbreviated (engg, Inst. of Tech.)', acronym: 'Acronym and city (KIT Indore)', misspelt: 'Misspelt',
+  lower: 'Loosely written', hindi: 'In Hindi', former: 'Former name',
+}
 
 export default function Evaluation() {
-  const [r, setR] = useState<any>(null)
-  useEffect(() => { api('/api/eval').then(setR) }, [])
-  if (!r) return null
-  if (r.missing) return <div className="box empty">No test results yet.</div>
-  const a = r.synthetic, b = r.real
-  const tot = a.per_defect.reduce((s: number, x: any) => s + x.planted, 0)
-  const det = a.per_defect.reduce((s: number, x: any) => s + x.detected, 0)
-  const laneOk = a.lanes.filter((x: any) => x.expected === x.got).reduce((s: number, x: any) => s + x.n, 0)
-  const laneN = a.lanes.reduce((s: number, x: any) => s + x.n, 0)
+  const [d, setD] = useState<any>(null)
+  const [err, setErr] = useState('')
+  useEffect(() => { api('/api/eval').then(setD).catch((e) => setErr(e.message)) }, [])
+  if (err) return <div className="note bad">{err}</div>
+  if (!d) return <div className="empty"><span className="spinner" /></div>
+  const im = d.institution_matching, nc = d.nature_of_complaint, sm = d.same_matter
   return (
     <div>
-      <div className="titlebar"><div><h1>Test results <Tip>Measured on a fresh set of {a.applications} test applications with known, deliberately planted problems, and on real approval letters from college websites.</Tip></h1>
-        <div className="sub">Last run {new Date(r.generated_at).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</div></div></div>
-      <div className="counts">
-        <button><span className="v">{pct(det / tot)}</span><span className="l">Planted problems found ({det} of {tot})</span></button>
-        <button><span className="v">{a.clean_applications - a.clean_with_unexplained_alert} of {a.clean_applications}</span><span className="l">Clean applications with no false alarm</span></button>
-        <button><span className="v">{pct(laneOk / laneN)}</span><span className="l">Right status colour</span></button>
-        <button><span className="v">{a.avg_seconds} s</span><span className="l">Time per application</span></button>
+      <div className="titlebar"><div><h1>Test results</h1><div className="sub">{d.note}</div></div></div>
+      <div className="counts static">
+        <div><span className="v">{im.overall.auto_correct ?? 0}%</span><span className="l">Institution linked automatically and correctly ({im.n} ways of writing)</span></div>
+        <div><span className="v" style={{ color: (im.overall.auto_wrong ?? 0) ? 'var(--red)' : 'var(--green)' }}>{im.overall.auto_wrong ?? 0}%</span><span className="l">Linked to the wrong institution</span></div>
+        <div><span className="v">{nc.top1}%</span><span className="l">Nature right first time · {nc.top3}% in top 3 ({nc.n} complaints)</span></div>
+        <div><span className="v">{sm.precision}% / {sm.recall}%</span><span className="l">Same matter: precision / recall ({sm.pairs} pairs)</span></div>
+        <div><span className="v">{sm.cross_language_found}</span><span className="l">Hindi–English pairs of the same matter found</span></div>
       </div>
       <div className="grid g2">
-        <div className="box"><div className="bh"><h3>Problems found, by type</h3></div>
-          <div className="tablewrap"><table className="t small"><thead><tr><th>Planted problem</th><th className="num">Found</th></tr></thead>
-            <tbody>{a.per_defect.map((x: any) => <tr key={x.code}><td>{x.label}</td>
-              <td className="num"><span className={`pill ${x.recall < 1 ? 'orange' : 'green'}`}>{x.detected} / {x.planted}</span></td></tr>)}</tbody></table></div></div>
-        <div className="grid" style={{ alignContent: 'start' }}>
-          <div className="box"><div className="bh"><h3>Reading values from documents</h3><Tip>Certificate numbers, dates, amounts, areas and names compared with what is printed.</Tip></div>
-            <div className="tablewrap"><table className="t small"><tbody>{Object.entries(a.extraction).map(([k, v]: any) => <tr key={k}><td>{k === 'ocr' ? 'Scanned documents' : 'Digital PDFs'}</td>
-              <td className="num">{v.n} values</td><td className="num"><b>{pct(v.accuracy)}</b> correct</td></tr>)}</tbody></table></div></div>
-          <div className="box"><div className="bh"><h3>Real approval letters</h3><Tip>{b.note}</Tip></div>
-            <div className="tablewrap"><table className="t small"><tbody>
-              <tr><td>Untouched letters wrongly flagged</td><td className="num"><b>{b.genuine_false_alarms} of {b.genuine_letters_tested}</b></td></tr>
-              {Object.entries(b.attacks).map(([k, v]: any) => <tr key={k}><td>Altered copies caught ({k === 'whiteout_incremental' ? 'number painted over' : 'number replaced and re-saved'})</td>
-                <td className="num"><b>{v.detected} of {v.tested}</b></td></tr>)}
-              {b.corpus?.cross_year && <tr><td>Consecutive years' letters that agree</td><td className="num"><b>{b.corpus.cross_year.checks - b.corpus.cross_year.issues} of {b.corpus.cross_year.checks}</b></td></tr>}
-            </tbody></table></div></div>
-          {Object.keys(a.unexplained_alerts).length > 0 && <div className="note small">One extra alert in the test set was checked by hand: both colleges used the same e-stamp number and neither copy could be confirmed, so flagging both is correct.</div>}
+        <div className="box"><div className="bh"><h2>Institution matching, by how the name was written</h2></div>
+          <div className="tablewrap"><table className="t small"><thead><tr><th>Written as</th>{Object.keys(OUT).map((k) => <th key={k} className="num">{OUT[k]}</th>)}</tr></thead>
+            <tbody>{Object.entries(im.by_style).map(([s, c]: any) => <tr key={s}><td>{STYLE[s] || s}</td>{Object.keys(OUT).map((k) => <td key={k} className="num">{c[k] || 0}</td>)}</tr>)}</tbody></table></div>
+          <div className="bb small muted">The system links automatically only when one institution is clearly ahead; otherwise an officer chooses. Sister institutions of one trust in one town are the usual reason for asking.</div>
+        </div>
+        <div className="box"><div className="bh"><h2>Nature of complaint</h2></div>
+          <div className="tablewrap"><table className="t small"><thead><tr><th>Complaint</th><th>Expected</th><th>Model's first choice</th></tr></thead>
+            <tbody>{nc.rows.map((r: any, i: number) => <tr key={i}><td>{r.text}</td><td>{r.expected}</td><td style={{ color: r.ok ? 'var(--green)' : 'var(--red)' }}>{r.got} ({Math.round(r.score * 100)}%)</td></tr>)}</tbody></table></div>
+          <div className="bb small muted">The model's choice is a suggestion: the officer confirms or changes it. Mistakes are mostly between close natures (fees vs. scholarship).</div>
         </div>
       </div>
+      <div className="box" style={{ marginTop: 14 }}><div className="bh"><h2>Same matter: pairs tested (threshold {sm.threshold})</h2></div>
+        <div className="tablewrap"><table className="t small"><thead><tr><th>Truth</th><th>Complaint A</th><th>Complaint B</th><th className="num">Score</th><th>Flagged</th></tr></thead>
+          <tbody>{sm.rows.map((r: any, i: number) => <tr key={i}><td>{r.truth === 'same' ? 'Same matter' : 'Different'}</td><td>{r.a}</td><td>{r.b}</td><td className="num">{r.score}</td>
+            <td style={{ color: r.predicted_same === (r.truth === 'same') ? 'var(--green)' : 'var(--red)' }}>{r.predicted_same ? 'Yes' : 'No'}</td></tr>)}</tbody></table></div>
+      </div>
+      <p className="small faint">Model: {d.model.model}. Computed in {d.seconds} s on this machine.</p>
     </div>
   )
 }

@@ -1,18 +1,19 @@
-import { createContext, useContext, useEffect, useState } from 'react'
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { createContext, useContext, useEffect, useRef, useState } from 'react'
+import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { api, getToken, setToken, type User } from './api'
 import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Application from './pages/Application'
-import Network from './pages/Network'
-import Verifications from './pages/Verifications'
-import EoaVerifier from './pages/EoaVerifier'
-import Ledger from './pages/Ledger'
-import Rules from './pages/Rules'
+import Overview from './pages/Overview'
+import Cases from './pages/Cases'
+import Case from './pages/Case'
+import Coordination from './pages/Coordination'
+import Institutions from './pages/Institutions'
+import Institution from './pages/Institution'
+import Register from './pages/Register'
+import Reports from './pages/Reports'
+import Settings from './pages/Settings'
 import Audit from './pages/Audit'
 import Evaluation from './pages/Evaluation'
-import Precheck from './pages/Precheck'
-import MyApplications from './pages/MyApplications'
+import Alerts from './pages/Alerts'
 
 export const UserCtx = createContext<User | null>(null)
 export const useUser = () => useContext(UserCtx)!
@@ -20,15 +21,48 @@ export const useUser = () => useContext(UserCtx)!
 function Header({ user, onLogout }: { user: User | null; onLogout?: () => void }) {
   return <>
     <div className="topstrip"><div className="in">
-      <span>Approval scrutiny &amp; document verification</span>
+      <span>Institution complaint monitoring · all Bureaus and Cells</span>
       {user && <span>Signed in: <b>{user.name}</b>{user.title ? ` (${user.title})` : ''} · <button onClick={onLogout}>Sign out</button></span>}
     </div></div>
     <div className="header"><div className="in">
-      <div className="logo"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="#fff" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg></div>
-      <div><b>Satyapan</b><small>Application and document checking for Extension of Approval</small></div>
+      <div className="logo"><svg width="22" height="22" viewBox="0 0 24 24"><circle cx="7" cy="12" r="3.2" fill="#fff" /><circle cx="17" cy="7" r="3.2" fill="#fff" /><circle cx="17" cy="17" r="3.2" fill="#fff" /><path d="M9.6 10.6 14.4 8.4M9.6 13.4l4.8 2.2" stroke="#fff" strokeWidth="1.8" /></svg></div>
+      <div><b>Samanvay</b><small>One view of every complaint and action on an institution</small></div>
+      {user && <Search />}
     </div></div>
   </>
 }
+
+function Search() {
+  const nav = useNavigate()
+  const [q, setQ] = useState('')
+  const [r, setR] = useState<any>(null)
+  const [open, setOpen] = useState(false)
+  const t = useRef<number>()
+  useEffect(() => {
+    window.clearTimeout(t.current)
+    if (q.trim().length < 2) { setR(null); return }
+    t.current = window.setTimeout(() => api(`/api/search?q=${encodeURIComponent(q)}`).then(setR).catch(() => {}), 200)
+  }, [q])
+  const go = (to: string) => { setOpen(false); setQ(''); nav(to) }
+  return (
+    <div className="gsearch" onBlur={() => setTimeout(() => setOpen(false), 150)}>
+      <input placeholder="Search case no., institution or Permanent ID" value={q} onChange={(e) => { setQ(e.target.value); setOpen(true) }} onFocus={() => setOpen(true)} />
+      {open && r && (r.cases.length + r.institutions.length > 0) && <div className="gdrop">
+        {r.institutions.map((i: any) => <button key={i.permanent_id} onMouseDown={() => go(`/institution/${i.permanent_id}`)}><b>{i.name}</b><span className="small faint"> {i.city} · {i.permanent_id}</span></button>)}
+        {r.cases.map((c: any) => <button key={c.id} onMouseDown={() => go(`/case/${c.id}`)}><span className="mono">{c.id}</span><span className="small faint"> {c.institution}</span></button>)}
+      </div>}
+    </div>
+  )
+}
+
+function Bell() {
+  const [n, setN] = useState(0)
+  const loc = useLocation()
+  useEffect(() => { api('/api/notifications').then((r) => setN(r.unread)).catch(() => {}) }, [loc.pathname])
+  return <NavLink to="/alerts" className="bell" title="Alerts">Alerts{n > 0 && <span className="count">{n > 99 ? '99+' : n}</span>}</NavLink>
+}
+
+const MORE = ['/register', '/settings', '/audit', '/evaluation']
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -36,7 +70,7 @@ export default function App() {
   const nav = useNavigate()
   const { pathname } = useLocation()
   const [more, setMore] = useState(false)
-  const moreOpen = more || ['/verifications', '/eoa', '/ledger', '/rules', '/audit', '/evaluation'].some((p) => pathname.startsWith(p))
+  const moreOpen = more || MORE.some((p) => pathname.startsWith(p))
   useEffect(() => {
     const as = new URLSearchParams(window.location.search).get('as')
     if (as) {
@@ -49,51 +83,46 @@ export default function App() {
   }, [])
   if (!ready) return null
   const logout = () => { setToken(null); setUser(null); nav('/') }
-  if (!user) return <><Header user={null} /><Login onLogin={(u) => { setUser(u); nav(u.role === 'institution' ? '/my' : '/') }} /></>
-  const staff = user.role !== 'institution'
+  if (!user) return <><Header user={null} /><Login onLogin={(u) => { setUser(u); nav('/') }} /></>
   return (
     <UserCtx.Provider value={user}>
       <Header user={user} onLogout={logout} />
       <nav className="nav"><div className="in">
-        {staff ? <>
-          <NavLink to="/" end>Applications</NavLink>
-          <NavLink to="/network">Links between institutions</NavLink>
+        <NavLink to="/" end>Overview</NavLink>
+        <NavLink to="/cases">Cases</NavLink>
+        <NavLink to="/coordination">Coordination</NavLink>
+        <NavLink to="/institutions">Institutions</NavLink>
+        <NavLink to="/reports">Reports</NavLink>
+        <span className="navright">
+          <Bell />
           <button className={`morebtn ${moreOpen ? 'active' : ''}`} onClick={() => setMore(!more)} aria-expanded={moreOpen}>More ▾</button>
-        </> : <>
-          <NavLink to="/my">My applications</NavLink>
-          <NavLink to="/precheck">Check before submitting</NavLink>
-          <NavLink to="/rules">What is checked</NavLink>
-        </>}
+        </span>
       </div></nav>
-      {staff && moreOpen && <div className="subnav"><div className="in">
-        <NavLink to="/verifications">Issuer checks</NavLink>
-        <NavLink to="/eoa">Check an approval letter</NavLink>
-        <NavLink to="/ledger">Institution records</NavLink>
-        <NavLink to="/rules">Rules</NavLink>
+      {moreOpen && <div className="subnav"><div className="in">
+        {(user.role === 'officer' || user.role === 'management') && <NavLink to="/register">Register complaint / import register</NavLink>}
+        <NavLink to="/settings">Settings</NavLink>
         <NavLink to="/audit">Activity log</NavLink>
         <NavLink to="/evaluation">Test results</NavLink>
       </div></div>}
       <main className="page">
         <Routes>
-          {staff ? <>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/network" element={<Network />} />
-            <Route path="/verifications" element={<Verifications />} />
-            <Route path="/eoa" element={<EoaVerifier />} />
-            <Route path="/ledger" element={<Ledger />} />
-            <Route path="/ledger/:pid" element={<Ledger />} />
-            <Route path="/audit" element={<Audit />} />
-            <Route path="/evaluation" element={<Evaluation />} />
-          </> : <>
-            <Route path="/my" element={<MyApplications />} />
-            <Route path="/precheck" element={<Precheck />} />
-          </>}
-          <Route path="/app/:id" element={<Application />} />
-          <Route path="/app/:id/doc/:docId" element={<Application />} />
-          <Route path="/rules" element={<Rules />} />
-          <Route path="*" element={<Navigate to={staff ? '/' : '/my'} />} />
+          <Route path="/" element={<Overview />} />
+          <Route path="/cases" element={<Cases />} />
+          <Route path="/case/*" element={<Case />} />
+          <Route path="/coordination" element={<Coordination />} />
+          <Route path="/coordination/:id" element={<Coordination />} />
+          <Route path="/institutions" element={<Institutions />} />
+          <Route path="/institution/:pid" element={<Institution />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/reports" element={<Reports />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/audit" element={<Audit />} />
+          <Route path="/evaluation" element={<Evaluation />} />
+          <Route path="/alerts" element={<Alerts />} />
+          <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>
+      <footer className="foot"><div className="in">All institutions, people and complaints shown are simulated test data. Automated alerts are advisory; actions and decisions are taken by authorised officials. <Link to="/evaluation">How well it works</Link></div></footer>
     </UserCtx.Provider>
   )
 }

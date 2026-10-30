@@ -1,6 +1,6 @@
-export type User = { id: string; name: string; role: string; title?: string; permanent_id?: string }
+export type User = { id: string; name: string; role: string; title?: string; bureau?: string | null; officer_id?: string; region?: string }
 
-let token: string | null = localStorageGet('satyapan.token')
+let token: string | null = localStorageGet('samanvay.token')
 
 function localStorageGet(k: string): string | null {
   try { return localStorage.getItem(k) } catch { return null }
@@ -9,7 +9,7 @@ function localStorageSet(k: string, v: string | null) {
   try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v) } catch { /* private mode */ }
 }
 
-export function setToken(t: string | null) { token = t; localStorageSet('satyapan.token', t) }
+export function setToken(t: string | null) { token = t; localStorageSet('samanvay.token', t) }
 export function getToken() { return token }
 
 export class ApiError extends Error {
@@ -29,5 +29,5 @@ export async function api<T = any>(path: string, opts: RequestInit & { json?: an
   return data as T
 }
 
-/** URLs for <img> need the token as a query parameter. */
-export const img = (path: string) => `${path}${path.includes('?') ? '&' : '?'}t=${encodeURIComponent(token || '')}`
+/** Links that download (CSV) need the token as a query parameter. */
+export const withToken = (path: string) => `${path}${path.includes('?') ? '&' : '?'}t=${encodeURIComponent(token || '')}`

@@ -1,67 +1,74 @@
-# Satyapan - AICTE application validation
+# Samanvay - institution complaint monitoring for AICTE
 
-Pre-scrutiny decision support for **Extension of Approval (self-disclosure)** under the **APH 2024-27**.
-Everything runs locally and free: no cloud APIs, no LLMs, no paid services.
+One view of every complaint and regulatory action on an institution, across the Regulation Bureau, the Public
+Grievance Redressal Cell, the Anti-Ragging Cell, the Approval Bureau and the Regional Offices. It finds the
+institution behind messy complaint text, spots when bureaus are working on the same institution or the same
+matter (in Hindi or English), warns an officer **before** an action clashes with another bureau's, and keeps
+every case on its timeline with reminders and escalation.
+
+Everything runs locally and free: no cloud APIs, no paid services. The language model runs on the server's CPU.
 
 ## What it does
 
-| Problem-statement objective | How it is done here |
+| Problem-statement need | How it is done here |
 |---|---|
-| Missing / incomplete / expired / inconsistent documents | Annexure-2 (2.1) checklist as **executable rules** (`backend/app/rules/aph_2024_27.yaml`), each quoting its APH clause; date, name, number and coordinate cross-checks across documents and the form |
-| Reuse AICTE's existing institutional records | **Ledger built from 84 real public EoA letters** (Annexure-18 mandatory disclosure): 70 institutions, 104 approvals, 1,052 course rows, each linked to its public source URL + SHA-256 |
-| Detect alterations, duplication, anomalies | PDF **revision recovery and diff**, **white-out detection** (text painted over), overlapping text, **generator fingerprints** learned from genuine files, editor-producer checks, DSC validation (pyHanko), photo EXIF/GPS, perceptual hash + **ORB/RANSAC** photo matching |
-| Verify with issuing authorities | Connector per source returning *verified / mismatch / expired / pending / source unavailable / manual review*, with request, response and timestamp; QR payload check; draft request letter when a source is down |
-| Infrastructure compliance | Annexure-3 built-up area and Annexure-5 faculty/cadre norms computed with the working shown; photo geotag vs campus; reused photos |
-| Dashboard, alerts, audit | Green/amber/red queue, cross-institution **network graph**, verification queue, **hash-chained audit log** |
-| Human in the loop | Every finding is reviewable (reason required); adverse recommendations are **blocked** until critical/high findings are reviewed |
+| Single view of all cases; which bureau has it | Cases list with search and filters (institution, Permanent ID, case/CPGRAMS no., bureau, region, nature, status, dates); case page with handling bureau, officer, last / next action, expected disposal |
+| Identify the institution even when written differently | **Institution resolver**: name words (spelling-tolerant), consonant outline (transliteration-tolerant), acronym ("KIT Indore"), former name, place, quoted Permanent ID; Hindi names transliterated. Links automatically only when one institution is clearly ahead, otherwise an officer chooses. Each match says why |
+| Overlap between RB, PGRC and others | Four kinds of alert per institution: **conflicting actions** (rules in `settings.yaml`, e.g. approval moving ahead while a show-cause is pending), **same matter in two places** (language-model text similarity, across Hindi and English, plus same complainant), **many complaints, one issue** (pattern), **parallel cases** (for information). Each with evidence and a suggested lead bureau; bureaus acknowledge and close |
+| Avoid duplicate / conflicting action | **Before you act**: recording an action that clashes with another bureau's is stopped until the officer coordinates or records a reason (kept in the case and the log). New complaints are checked against existing ones while being typed |
+| Status and movement of a case | Full history with who, when, remarks; transfers move the case with its history; per-institution **swimlane timeline** of every bureau's cases |
+| Pending, overdue, escalated | Timeline per nature of complaint (21 days for grievances, DARPG OM of 23.08.2024; others configurable). Escalation ladder: due soon → overdue (section head) → bureau head → senior management. In-app alerts per bureau and level |
+| Reports | Bureau-, region-, nature-, institution-wise; monthly received vs disposed; ageing; disposal rate; overlaps raised / closed. CSV download and print |
+| Integration | REST API; **register import** (CSV from a bureau's spreadsheet) with matching and duplicate check before saving |
+| Safeguards | Role-based access on every route; complaint text and complainant visible only to the handling bureau (and bureaus sharing an alert); contact numbers stored only as salted fingerprints; every view, action and setting change in a **hash-chained activity log**; alerts are advisory, officers act |
 
-**The idea in one line:** clicking any highlight on a document shows *why* it was marked: the evidence on the page, the rule and APH clause (opens the handbook page highlighted), how the number was computed, and what fixes it.
+## The AI parts, and what they are
+
+* **Multilingual sentence embeddings**: `paraphrase-multilingual-MiniLM-L12-v2` (50+ languages), quantised ONNX run
+  by fastembed on CPU. Used for (1) nature of complaint, zero-shot against plain descriptions in `settings.yaml`
+  and (2) same-matter similarity between complaints, including Hindi ↔ English. Nothing is trained on the test data.
+* Everything else is rules and string matching, and says so on screen.
+* **Test results** page (`scripts/evaluate.py`, inputs written separately from the demo data): institution
+  matching 96% automatic and correct, 0% linked wrongly; nature of complaint 73% first choice, 92% in top 3;
+  same matter precision 100%, recall 75%, all Hindi–English pairs found.
 
 ## Real vs simulated
 
-* **Real institutions (Bangalore):** Dayananda Sagar College of Engineering and B.M.S. College of Engineering are checked using only the documents they publish on their websites (approval letters 2015-2027, fire certificates, occupancy certificate, mandatory disclosures). Findings are worded as observations about the *publicly posted* copies, e.g. "the posted fire clearance was valid until 15 Mar 2024; a renewed one may exist".
-* **Real:** APH 2024-27 text and norms, 84 public EoA letters and the ledger built from them, generator fingerprints learned from them, 43 CC-licensed infrastructure photos (Wikimedia Commons, attribution in `data/raw/photos/manifest.json`), OSM map tiles, all forensics/signature/QR/OCR computation.
-* **Simulated (clearly labelled in the UI):** the 14 demo institutions (invented names), their certificates (every page carries a *SYNTHETIC TEST DOCUMENT* footer), the issuer registers (fire services, SHCIL e-stamp, municipal OC, ICAI UDIN), and the test DSC PKI.
+* **Real:** AICTE regional office structure, DARPG 21-day grievance timeline, the language model.
+* **Simulated (labelled on every page):** all institutions, people, complaints and actions. No real institution or
+  person is named.
 
 ## Run
 
 ```bash
-python -m venv .venv && .venv/Scripts/pip install -r requirements.txt     # Windows; use .venv/bin on Linux/macOS
-python scripts/fetch_aph.py          # AICTE Approval Process Handbook 2024-27 (+ text)
-python scripts/collect_eoa.py        # download public EoA letters (+ manifest with provenance)
-python scripts/collect_photos.py     # CC-licensed photos
-python scripts/dedupe_photos.py
-python scripts/build_ledger.py       # parse letters -> institutional record
-python scripts/build_profiles.py     # learn generator fingerprints (real letters + reference set)
-python scripts/collect_real_institutions.py  # DSCE + BMSCE public documents
-python scripts/make_eoa_samples.py   # real + tampered letters for the EoA verifier, corpus stats
-python scripts/seed_demo.py          # generate + process the 14 test applications, then load the real colleges
-python scripts/evaluate.py           # metrics -> Evaluation screen
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt   # Windows; .venv/bin on Linux/macOS
+python scripts/seed.py         # test data (first run downloads the language model, about 240 MB on disk)
+python scripts/evaluate.py     # Test results page
 cd frontend && npm install && npm run build && cd ..
-cd backend && ../.venv/Scripts/python -m uvicorn app.api:app --port 8000
+start.bat                      # or: cd backend && ../.venv/Scripts/python -m uvicorn app.api:app --port 8000
 ```
-Open http://127.0.0.1:8000 (or `npm run dev` in `frontend/` for development on :5173).
+Open http://127.0.0.1:8000. `reset-demo.bat` reloads fresh test data (dates are relative to today) and starts the site.
 
-## Demo script (about 6 minutes)
+Quick sign-in links: `/?as=pgrc`, `/?as=rb`, `/?as=ab`, `/?as=arc`, `/?as=ro`, `/?as=head` (senior management), `/?as=admin`.
 
-Quick sign-in links: `/?as=officer`, `/?as=verifier`, `/?as=admin`, `/?as=inst:1-9940183347`.
+## Demo script (about 3 minutes)
 
-1. **Applications**: one table, red/orange/green. Filter "Real institutions" shows DSCE and BMSCE.
-2. **B.M.S. College of Engineering** (real): *Fire safety certificate has expired*. Open the document; the side list shows each item, click one to see it on the page. The validity was worked out from "renewed for a further period of two years" (15 Mar 2022). Also: partial occupancy certificate from 2019, beyond the 2-year allowance in Annexure-3.
-3. **Dayananda Sagar College of Engineering** (real): *Wrong document uploaded*. The file their disclosure links as "Fire and Safety Certificate" is a fire-extinguisher disposal certificate from a private firm.
-4. **Neelkamal Tarai** (test): *Text covered and retyped*. "Show earlier version" brings back the original date.
-5. **Links between institutions**: drag, zoom, Enlarge. Kesarveni ↔ Neelkamal Tarai share 6 faculty; Tejasvarna re-used Ratnaparvat's fire certificate (Ratnaparvat stays green, its copy is confirmed with the issuer).
-6. **Issuer checks**: Tamil Nadu fire service offline → letter drafted; admin sets it online → retry → confirmed.
-7. **Check an approval letter**: a real letter → matches the AICTE record; the same letter with the intake doubled → caught twice (the file and the record).
-8. **Institution sign-in** (Shaktikund): Check before submitting → upload the renewed fire certificate → only the faculty shortfall remains.
-9. **Activity log**: intact.
+1. **Overview** as senior management (`?as=head`): counts, workload by bureau, ageing, **Needs coordination**.
+2. **Kesarveni Institute of Technology** (institution page): five students complain of fee refunds at PGRC
+   (pattern), RB has issued a show-cause, and the Approval Bureau is processing an intake increase. The swimlane shows all three at once.
+3. Sign in as the **Approval Bureau** (`?as=ab`), open its Kesarveni case, record *Approval recommended*:
+   **Before you act** stops it and shows RB's show-cause.
+4. **Neelkamal Tarai**: the same student complained in Hindi to PGRC and in English to RB. The language model
+   links them. As RB, *Reply sought from institution* is stopped: PGRC already asked.
+5. **Register complaint** → *Hindi complaint, already filed elsewhere*: the institution, nature and the existing
+   case appear while typing. *Ragging sent to the wrong cell* suggests the Anti-Ragging Cell.
+6. **Coordination** → acknowledge, set lead, close with a note. **Reports**, **Alerts**, **Activity log** (intact).
 
 ## Layout
 
 ```
-backend/app/   docmodel (text layer + OCR with boxes) · extract/ (EoA parser, field extractors) · forensics/ (pdf, structure, image)
-               rules/ (YAML + engine + norms + citations) · verify/ (connectors, registry) · graph · pipeline · api
-scripts/       data collection, ledger, profiles, demo seed, evaluation
+backend/app/   api · service (case operations) · workflow (actions, timelines) · overlap (alerts, before-you-act)
+               resolve + textnorm (institution matching) · ai (language model) · settings.yaml · audit · demo (test data)
+scripts/       seed.py (test data) · evaluate.py (test results)
 frontend/      React + Vite UI
-data/          raw corpus, ledger DB, generated sets, eval report
 ```

@@ -4,37 +4,37 @@ Run:  uvicorn app.api:app --port 8000   (from backend/)
 """
 from __future__ import annotations
 
+import csv
 import hashlib
 import hmac
+import io
 import json
-import logging
+import threading
 import time
-import uuid
-from datetime import datetime, timezone
-from pathlib import Path
+from collections import Counter, defaultdict
+from datetime import date, timedelta
 
-import pymupdf
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import audit, db, docmodel, graph, pipeline, wording
-from .config import APH_PDF, DATA, RENDER, ROOT, STORE
-from .extract import docs as D
-from .rules import citations, engine, norms
-from .verify import connectors, registry
+from . import ai, audit, db, overlap, resolve, service, settings
+from .config import DATA, ROOT
+from .workflow import ACTIONS, OFFICER_ACTIONS, STATUS, d, timeline, today
 
-logging.getLogger("pyhanko").setLevel(logging.CRITICAL)
-app = FastAPI(title="Satyapan - application validation and document verification")
-SECRET = b"satyapan-demo-secret"
+app = FastAPI(title="Samanvay - institution complaint monitoring")
+SECRET = b"samanvay-demo-secret"
 
 USERS = {
-    "officer": {"name": "R. Sharma", "role": "scrutiny_officer", "title": "Scrutiny Officer, South-Central Region"},
-    "verifier": {"name": "A. Menon", "role": "verifier", "title": "Verification Cell"},
-    "admin": {"name": "S. Iyer", "role": "admin", "title": "Approval Bureau (rules & sources)"},
+    "pgrc": {"name": "K. Verma", "role": "officer", "bureau": "PGRC", "officer_id": "PGRC-1", "title": "Section Officer, Public Grievance Redressal Cell"},
+    "rb": {"name": "S. Rao", "role": "officer", "bureau": "RB", "officer_id": "RB-1", "title": "Deputy Director, Regulation Bureau"},
+    "ab": {"name": "M. Das", "role": "officer", "bureau": "AB", "officer_id": "AB-1", "title": "Assistant Director, Approval Bureau"},
+    "arc": {"name": "N. Gupta", "role": "officer", "bureau": "ARC", "officer_id": "ARC-1", "title": "Officer, Anti-Ragging Cell"},
+    "ro": {"name": "P. Nair", "role": "officer", "bureau": "RO", "officer_id": "RO-SW", "region": "South-Western", "title": "Regional Officer, South-Western Region"},
+    "head": {"name": "Dr. A. Kulkarni", "role": "management", "bureau": None, "title": "Adviser (Monitoring), senior management"},
+    "admin": {"name": "S. Iyer", "role": "admin", "bureau": None, "title": "System administrator"},
 }
-ROLES_READ_ALL = {"scrutiny_officer", "verifier", "admin"}
 
 
 # ------------------------------------------------------------------------------------ auth
@@ -43,37 +43,22 @@ def _sign(payload: str) -> str:
     return payload + "." + hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()[:24]
 
 
-def user(x_token: str | None = Header(default=None)) -> dict:
-    if not x_token or "." not in x_token:
+def user(x_token: str | None = Header(default=None), t: str | None = Query(default=None)) -> dict:
+    tok = x_token or t
+    if not tok or "." not in tok:
         raise HTTPException(401, "login required")
-    payload, sig = x_token.rsplit(".", 1)
-    if _sign(payload) != x_token:
+    payload = tok.rsplit(".", 1)[0]
+    if _sign(payload) != tok or payload not in USERS:
         raise HTTPException(401, "bad token")
-    uid = payload
-    if uid.startswith("inst:"):
-        pid = uid[5:]
-        inst = db.q1("SELECT name FROM institutions WHERE permanent_id=?", (pid,))
-        return {"id": uid, "name": (inst or {}).get("name", pid), "role": "institution", "permanent_id": pid, "title": "Institution login"}
-    u = USERS.get(uid)
-    if not u:
-        raise HTTPException(401, "unknown user")
-    return {"id": uid, **u}
+    return {"id": payload, **USERS[payload]}
 
 
 def need(*roles):
     def dep(u=Depends(user)):
         if u["role"] not in roles:
-            raise HTTPException(403, f"role '{u['role']}' may not perform this action")
+            raise HTTPException(403, f"role '{u['role']}' may not do this")
         return u
     return dep
-
-
-def _can_see_app(u: dict, app_row: dict) -> None:
-    if u["role"] in ROLES_READ_ALL:
-        return
-    if u["role"] == "institution" and app_row["permanent_id"] == u["permanent_id"]:
-        return
-    raise HTTPException(403, "not your application")
 
 
 class Login(BaseModel):
@@ -82,15 +67,11 @@ class Login(BaseModel):
 
 @app.post("/api/login")
 def login(body: Login):
-    uid = body.user
-    if uid.startswith("inst:"):
-        if not db.q1("SELECT 1 FROM institutions WHERE permanent_id=?", (uid[5:],)):
-            raise HTTPException(404, "institution not found")
-    elif uid not in USERS:
+    if body.user not in USERS:
         raise HTTPException(404, "unknown user")
-    tok = _sign(uid)
-    u = user(tok)
-    audit.log(uid, u["role"], "auth.login", uid, {})
+    tok = _sign(body.user)
+    u = {"id": body.user, **USERS[body.user]}
+    audit.log(body.user, u["role"], "auth.login", body.user)
     return {"token": tok, "user": u}
 
 
@@ -101,357 +82,732 @@ def me(u=Depends(user)):
 
 @app.get("/api/demo-users")
 def demo_users():
-    insts = db.q("SELECT a.permanent_id, i.name FROM applications a JOIN institutions i ON i.permanent_id=a.permanent_id ORDER BY i.name")
-    return {"staff": [{"id": k, **v} for k, v in USERS.items()], "institutions": insts}
+    return [{"id": k, **v} for k, v in USERS.items()]
 
 
-# ------------------------------------------------------------------------------------ views
+# ------------------------------------------------------------------------------------ helpers
 
-def _applicant_lane(app_id: str) -> tuple[str, dict]:
-    """Lane as the applicant may see it: computed without cross-institution intelligence."""
-    fs = db.q("SELECT * FROM findings WHERE application_id=? AND kind != 'network'", (app_id,))
-    vs = db.q("SELECT status FROM verifications WHERE application_id=?", (app_id,))
-    lane, _, summary = pipeline._lane(fs, vs)
-    return lane, summary
+_inst_cache: dict | None = None
+_officer_cache: dict | None = None
 
 
-def _app_rows(where="", args=()):
-    rows = db.q(f"SELECT a.id, a.permanent_id, a.category, a.academic_year, a.status, a.lane, a.risk, a.summary, a.created_at, "
-                f"a.processed_at, a.source, i.name, i.state, i.region, i.source AS inst_source FROM applications a "
-                f"LEFT JOIN institutions i ON i.permanent_id=a.permanent_id {where} ORDER BY a.risk DESC", args)
-    sev = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    for r in rows:
-        r["summary"] = db.unj(r["summary"], {})
-        r["decision"] = _decision(r["id"])
-        fs = [{**f, "title": wording.title(f)} for f in db.q("SELECT rule_id, title, kind, severity, status FROM findings WHERE application_id=? "
-                                                              "AND status IN ('fail','warn','manual')", (r["id"],))]
-        fs.sort(key=lambda f: ({"fail": 0, "warn": 1, "manual": 2}[f["status"]], sev.get(f["severity"], 9)))
-        seen, top = set(), []
-        for f in fs:
-            if f["title"] not in seen and f["status"] == "fail":
-                seen.add(f["title"]); top.append({"title": f["title"], "kind": f["kind"]})
-        r["top"] = top[:3]
-        r["n_fail"] = sum(1 for f in fs if f["status"] == "fail")
-        r["n_check"] = sum(1 for f in fs if f["status"] != "fail")
-    return rows
+def insts() -> dict:
+    global _inst_cache
+    if _inst_cache is None:
+        _inst_cache = {r["permanent_id"]: r for r in db.q("SELECT * FROM institutions")}
+    return _inst_cache
 
 
-def _decision(app_id):
-    r = db.q1("SELECT * FROM reviews WHERE application_id=? AND finding_id='__decision__' ORDER BY id DESC LIMIT 1", (app_id,))
-    return r
+def officers() -> dict:
+    global _officer_cache
+    if _officer_cache is None:
+        _officer_cache = {r["id"]: r for r in db.q("SELECT * FROM officers")}
+    return _officer_cache
 
 
-@app.get("/api/stats")
-def stats(u=Depends(need(*ROLES_READ_ALL))):
-    apps = _app_rows("WHERE a.source != 'precheck'")
-    lanes = {k: sum(1 for a in apps if a["lane"] == k) for k in ("green", "amber", "red")}
-    ver = {r["status"]: r["n"] for r in db.q("SELECT status, COUNT(*) n FROM verifications GROUP BY status")}
-    open_alerts = db.q1("SELECT COUNT(*) n FROM findings f WHERE status IN ('fail','warn','manual') AND NOT EXISTS "
-                        "(SELECT 1 FROM reviews r WHERE r.finding_id=f.id)")["n"]
-    secs = [a["summary"].get("seconds") for a in apps if a["summary"].get("seconds")]
-    led = {"institutions": db.q1("SELECT COUNT(*) n FROM institutions WHERE source='public_eoa'")["n"],
-           "approvals": db.q1("SELECT COUNT(*) n FROM approvals WHERE source_url != ''")["n"],
-           "courses": db.q1("SELECT COUNT(*) n FROM approval_courses c JOIN approvals a ON a.id=c.approval_id WHERE a.source_url != ''")["n"]}
-    return {"applications": len(apps), "lanes": lanes, "verifications": ver, "open_alerts": open_alerts,
-            "avg_seconds": round(sum(secs) / len(secs), 1) if secs else None, "ledger": led,
-            "network_links": len(graph.network()["edges"]), "audit": audit.verify_chain()}
+def open_alerts() -> list[dict]:
+    return db.q("SELECT * FROM coordination WHERE status IN ('open','acknowledged')")
 
 
-@app.get("/api/applications")
-def applications(u=Depends(user)):
-    if u["role"] == "institution":
-        rows = _app_rows("WHERE a.permanent_id=?", (u["permanent_id"],))
-        for r in rows:
-            r["lane"], summ = _applicant_lane(r["id"])
-            r["summary"] = {**summ, "seconds": r["summary"].get("seconds")}
-        return rows
-    return _app_rows("WHERE a.source != 'precheck'")
+class AlertMap(defaultdict):
+    """case id -> open alerts it is part of; also remembers, per bureau, the alerts that involve that bureau."""
+
+    def __init__(self):
+        super().__init__(list)
+        self.mine: dict[str | None, set[str]] = {}
 
 
-def _findings(app_id: str, u: dict) -> list[dict]:
-    rows = db.q("SELECT * FROM findings WHERE application_id=?", (app_id,))
-    reviews = {r["finding_id"]: r for r in db.q("SELECT * FROM reviews WHERE application_id=? ORDER BY id", (app_id,))}
-    remedies = {r["id"]: r.get("remedy") for r in engine.ruleset()["rules"]}
+def alerts_by_case() -> AlertMap:
+    out = AlertMap()
+    for a in open_alerts():
+        for c in db.unj(a["cases"], []):
+            out[c].append({"id": a["id"], "kind": a["kind"]})
+    return out
+
+
+def can_see(u: dict, c: dict, alert_map: dict | None = None) -> bool:
+    """Full complaint text: the handling bureau, senior management, the regional office of the institution's
+    region, and bureaus that share an open overlap alert with the case. Others see the summary only."""
+    if u["role"] in ("management", "admin") or c["bureau"] == u.get("bureau"):
+        return True
+    inst = insts().get(c["permanent_id"] or "")
+    if u.get("bureau") == "RO" and inst and inst["region"] == u.get("region"):
+        return True
+    amap = alert_map if alert_map is not None else alerts_by_case()
+    if c["id"] not in amap:
+        return False
+    return any(a["id"] in _my_alert_ids(u, amap) for a in amap.get(c["id"], []))
+
+
+def _my_alert_ids(u: dict, amap: AlertMap) -> set[str]:
+    """Open alerts that include at least one case of the user's bureau (computed once per request)."""
+    b = u.get("bureau")
+    if b not in amap.mine:
+        bureau_of = {r["id"]: r["bureau"] for r in db.q("SELECT id, bureau FROM cases")}
+        amap.mine[b] = {a["id"] for cid, al in list(amap.items()) for a in al if bureau_of.get(cid) == b}
+    return amap.mine[b]
+
+
+def mask(name: str | None) -> str:
+    if not name:
+        return ""
+    return " ".join(w[0] + "." for w in name.split() if w[:1].isalpha()) or "—"
+
+
+def row(c: dict, u: dict, amap: dict) -> dict:
+    inst = insts().get(c["permanent_id"] or "") or {}
+    tl = timeline(c)
+    vis = can_see(u, c, amap)
+    off = officers().get(c["officer_id"] or "") or {}
+    return {
+        "id": c["id"], "bureau": c["bureau"], "received_on": c["received_on"], "source": c["source"], "ext_ref": c["ext_ref"],
+        "permanent_id": c["permanent_id"], "institution": inst.get("name"), "city": inst.get("city"), "region": inst.get("region"),
+        "inst_text": c["inst_text"], "match_state": c["match_state"],
+        "category": c["category"], "category_label": settings.category(c["category"])["label"],
+        "subject": c["subject"] if vis else None, "status": c["status"], "status_label": STATUS[c["status"]],
+        "officer": off.get("name"), "officer_id": c["officer_id"], "last_action": c["last_action"], "last_action_on": c["last_action_on"],
+        "next_action": c["next_action"], "next_due": c["next_due"], "due_on": c["due_on"], "disposed_on": c["disposed_on"],
+        "outcome": c["outcome"], "timeline": tl, "esc_level": c["esc_level"], "lang": c["lang"],
+        "alerts": amap.get(c["id"], []), "visible": vis,
+    }
+
+
+def _case(cid: str) -> dict:
+    c = db.q1("SELECT * FROM cases WHERE id=?", (cid,))
+    if not c:
+        raise HTTPException(404, "case not found")
+    return c
+
+
+def _may_act(u: dict, c: dict) -> None:
+    if u["role"] == "management":
+        return
+    if u["role"] != "officer" or c["bureau"] != u["bureau"]:
+        raise HTTPException(403, f"Only {c['bureau']} officers can act on this case")
+
+
+def _refresh_caches():
+    global _inst_cache, _officer_cache
+    _inst_cache = _officer_cache = None
+    resolve.reload()
+
+
+# ------------------------------------------------------------------------------------ overview
+
+@app.get("/api/overview")
+def overview(scope: str = "mine", u=Depends(user)):
+    amap = alerts_by_case()
+    cases = db.q("SELECT * FROM cases")
+    if scope == "mine" and u.get("bureau"):
+        cases = [c for c in cases if c["bureau"] == u["bureau"]]
+    open_ = [c for c in cases if c["status"] != "disposed"]
+    tls = {c["id"]: timeline(c) for c in open_}
+    t30 = (today() - timedelta(days=30)).isoformat()
+    disposed = [c for c in cases if c["status"] == "disposed"]
+    counts = {
+        "total": len(cases), "pending": sum(c["status"] == "pending" for c in cases),
+        "under_process": sum(c["status"] == "under_process" for c in cases), "transferred": sum(c["status"] == "transferred" for c in cases),
+        "escalated": sum((c["esc_level"] or -1) >= 2 for c in open_), "overdue": sum(tls[c["id"]].get("state") == "overdue" for c in open_),
+        "due_soon": sum(tls[c["id"]].get("state") == "due_soon" for c in open_), "disposed": len(disposed),
+        "received_30d": sum(c["received_on"] >= t30 for c in cases), "disposed_30d": sum((c["disposed_on"] or "") >= t30 for c in disposed),
+        "unconfirmed": sum(c["match_state"] in ("confirm", "unmatched") for c in cases),
+    }
+    in_time = [c for c in disposed if timeline(c)["state"] == "in_time"]
+    counts["in_time_rate"] = round(100 * len(in_time) / len(disposed)) if disposed else None
+    buckets = [("0-7 days", 0, 7), ("8-14", 8, 14), ("15-21", 15, 21), ("22-30", 22, 30), ("31-60", 31, 60), ("Over 60", 61, 10**6)]
+    ageing = [{"label": b, "n": sum(lo <= tls[c["id"]]["age"] <= hi for c in open_)} for b, lo, hi in buckets]
+    bureaus = []
+    for b, info in settings.get()["bureaus"].items():
+        bc = [c for c in db.q("SELECT * FROM cases WHERE bureau=?", (b,))]
+        bo = [c for c in bc if c["status"] != "disposed"]
+        btl = [timeline(c) for c in bo]
+        bureaus.append({"bureau": b, "name": info["name"], "open": len(bo), "overdue": sum(t.get("state") == "overdue" for t in btl),
+                        "escalated": sum((c["esc_level"] or -1) >= 2 for c in bo),
+                        "avg_age": round(sum(t["age"] for t in btl) / len(btl)) if btl else 0,
+                        "disposed_30d": sum((c["disposed_on"] or "") >= t30 for c in bc),
+                        "officers": len({c["officer_id"] for c in bo})})
+    regions = Counter()
+    reg_over = Counter()
+    for c in open_:
+        r = (insts().get(c["permanent_id"] or "") or {}).get("region") or "Not identified"
+        regions[r] += 1
+        reg_over[r] += tls[c["id"]].get("state") == "overdue"
+    alerts = []
+    my_bureau = u.get("bureau")
+    ordered = sorted(open_alerts(), key=lambda a: a["created_at"], reverse=True)
+    for a in sorted(ordered, key=lambda a: overlap.KIND[a["kind"]]["rank"]):
+        cs = db.unj(a["cases"], [])
+        bs = sorted({(db.q1("SELECT bureau FROM cases WHERE id=?", (x,)) or {}).get("bureau") for x in cs})
+        if scope == "mine" and my_bureau and my_bureau not in bs:
+            continue
+        alerts.append(_alert_row(a, bs, u))
+    attention = []
+    if u.get("bureau"):
+        mine = [c for c in open_ if c["bureau"] == u["bureau"]]
+        strong = lambda c: any(a["kind"] != "parallel" for a in amap.get(c["id"], []))
+        mine.sort(key=lambda c: (not strong(c), tls[c["id"]]["days_left"]))
+        attention = [row(c, u, amap) for c in mine[:8]]
+    return {"counts": counts, "ageing": ageing, "bureaus": bureaus, "alerts": alerts,
+            "regions": [{"region": r, "open": n, "overdue": reg_over[r]} for r, n in sorted(regions.items())],
+            "attention": attention, "model": ai.backend(), "today": today().isoformat()}
+
+
+def _alert_row(a: dict, bureaus: list[str], u: dict) -> dict:
+    inst = insts().get(a["permanent_id"]) or {}
+    acks = db.unj(a["acks"], {})
+    return {"id": a["id"], "kind": a["kind"], "kind_label": overlap.KIND[a["kind"]]["label"], "color": overlap.KIND[a["kind"]]["color"],
+            "title": a["title"], "institution": inst.get("name"), "permanent_id": a["permanent_id"], "region": inst.get("region"),
+            "cases": db.unj(a["cases"], []), "bureaus": bureaus, "lead": a["lead"], "status": a["status"], "acks": acks,
+            "my_ack": (u.get("bureau") in acks) if u.get("bureau") else None, "created_at": a["created_at"], "updated_at": a["updated_at"]}
+
+
+# ------------------------------------------------------------------------------------ cases
+
+@app.get("/api/cases")
+def cases(q: str = "", bureau: str = "", region: str = "", category: str = "", status: str = "", state: str = "",
+          frm: str = "", to: str = "", pid: str = "", mine: int = 0, limit: int = 500, u=Depends(user)):
+    amap = alerts_by_case()
+    rows = db.q("SELECT * FROM cases ORDER BY received_on DESC")
     out = []
-    for f in rows:
-        if f["rule_id"] in remedies and remedies[f["rule_id"]]:
-            f["remedy"] = remedies[f["rule_id"]]          # rules are editable: always show the current wording
-        if u["role"] == "institution" and f["kind"] in ("authenticity", "verification"):
-            f["remedy"] = "Upload the original document exactly as the issuing office gave it, without any changes."
-        if u["role"] == "institution" and f["kind"] in ("network",):
-            continue        # cross-institution intelligence is not disclosed to applicants
-        ev = db.unj(f["evidence"], {})
-        cit = db.unj(f["citation"], {})
-        if cit.get("quote") and not cit.get("loc"):
-            cit["loc"] = citations.locate(cit["quote"])
-        out.append({**f, "title": wording.title(f), "evidence": ev.get("items", []), "derivation": ev.get("derivation"), "citation": cit,
-                    "review": reviews.get(f["id"])})
-    order = {"fail": 0, "warn": 1, "manual": 2, "pass": 3, "na": 4}
-    sev = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    return sorted(out, key=lambda f: (order.get(f["status"], 9), sev.get(f["severity"], 9)))
+    ql = q.strip().lower()
+    for c in rows:
+        if bureau and c["bureau"] != bureau or category and c["category"] != category or pid and c["permanent_id"] != pid:
+            continue
+        if status == "open" and c["status"] == "disposed" or status and status != "open" and c["status"] != status:
+            continue
+        if mine and c["officer_id"] != u.get("officer_id"):
+            continue
+        if frm and c["received_on"] < frm or to and c["received_on"] > to:
+            continue
+        r = row(c, u, amap)
+        if region and r["region"] != region:
+            continue
+        if state == "overdue" and r["timeline"].get("state") != "overdue" or state == "due_soon" and r["timeline"].get("state") != "due_soon":
+            continue
+        if state == "escalated" and not (c["status"] != "disposed" and (c["esc_level"] or -1) >= 2):
+            continue
+        if state == "overlap" and not r["alerts"] or state == "unconfirmed" and c["match_state"] not in ("confirm", "unmatched"):
+            continue
+        if ql:
+            hay = " ".join(str(x or "") for x in (c["id"], c["ext_ref"], r["institution"], c["permanent_id"], c["inst_text"],
+                                                  r["subject"], r["category_label"], r["city"])).lower()
+            if ql not in hay:
+                continue
+        out.append(r)
+    return {"rows": out[:limit], "total": len(out)}
 
 
-@app.get("/api/applications/{app_id}")
-def application(app_id: str, u=Depends(user)):
-    a = db.q1("SELECT * FROM applications WHERE id=?", (app_id,))
-    if not a:
-        raise HTTPException(404)
-    _can_see_app(u, a)
-    form = db.unj(a["form"], {})
-    inst = db.q1("SELECT * FROM institutions WHERE permanent_id=?", (a["permanent_id"],))
-    docs = db.q("SELECT id, declared_type, doc_type, filename, sha256, mime, pages, page_sizes, classification, extraction, forensics "
-                "FROM documents WHERE application_id=?", (app_id,))
-    for d in docs:
-        for k in ("page_sizes", "classification", "extraction", "forensics"):
-            d[k] = db.unj(d[k], {})
-        d["title"] = D.DOC_TYPES.get(d["doc_type"], {}).get("title", d["doc_type"])
-    verifs = []
-    for v in db.q("SELECT * FROM verifications WHERE application_id=?", (app_id,)):
-        resp = db.unj(v["response"], {})
-        verifs.append({**v, "request": db.unj(v["request"], {}), "response": resp.get("response"), "checks": resp.get("checks", []),
-                       "letter": resp.get("letter"), "evidence": resp.get("evidence", []), "resolution": resp.get("resolution")})
-    ledger = pipeline._ledger(a["permanent_id"], a["academic_year"])
-    delta = []
-    if ledger and ledger.get("courses"):
-        k = lambda c: ((c.get("level") or "").upper().replace(" ", ""), c["course"].upper())  # noqa: E731
-        prev = {k(c): c["intake_curr"] for c in ledger["courses"]}
-        for c in form.get("courses", []):
-            p = prev.pop(k(c), None)
-            delta.append({"course": c["course"], "approved": p, "applied": c["intake"],
-                          "change": "new" if p is None else ("increase" if c["intake"] > p else ("decrease" if c["intake"] < p else "same"))})
-        for kk, p in prev.items():
-            if p:
-                delta.append({"course": kk[1], "approved": p, "applied": 0, "change": "dropped"})
-    req = {"faculty": norms.faculty_requirement(form.get("courses", [])), "area": norms.area_requirement(form.get("courses", [])),
-           "ter": norms.ter_required(form.get("courses", []), a["academic_year"], (inst or {}).get("inst_type", ""))}
-    form = {**form, "faculty": [{**f, "pan": "XXXXX" + f.get("pan", "")[5:9] + "X"} for f in form.get("faculty", [])]}
-    audit.log(u["id"], u["role"], "application.viewed", app_id, {})
-    summary = db.unj(a["summary"], {})
-    if u["role"] == "institution":
-        a = {**a}
-        a["lane"], s2 = _applicant_lane(app_id)
-        summary = {**s2, "seconds": summary.get("seconds")}
-    return {"application": {**{k: a[k] for k in ("id", "permanent_id", "category", "academic_year", "status", "lane", "risk",
-                                                 "created_at", "processed_at", "source")},
-                            "summary": summary, "decision": _decision(app_id) if u["role"] != "institution" else None},
-            "institution": inst, "form": form, "documents": docs, "findings": _findings(app_id, u),
-            "verifications": verifs, "ledger": ledger, "delta": delta, "norms": req}
+@app.get("/api/cases/{cid:path}/detail")
+def case_detail(cid: str, u=Depends(user)):
+    c = _case(cid)
+    amap = alerts_by_case()
+    r = row(c, u, amap)
+    vis = r["visible"]
+    inst = insts().get(c["permanent_id"] or "")
+    hist = db.q("SELECT * FROM actions WHERE case_id=? ORDER BY ts, id", (cid,))
+    for h in hist:
+        h["label"] = ACTIONS.get(h["kind"], {}).get("label", h["kind"])
+        h["extra"] = db.unj(h["extra"], {})
+    related = []
+    if c["permanent_id"]:
+        others = db.q("SELECT * FROM cases WHERE permanent_id=? AND id!=?", (c["permanent_id"], cid))
+        if others:
+            vecs = ai.case_vectors([c, *others])
+            for o in others:
+                pm = overlap.same_matter(c, o, vecs[cid], vecs[o["id"]])
+                orow = row(o, u, amap)
+                related.append({**orow, "same": pm["same"], "score": pm["score"], "reasons": pm["reasons"]})
+            related.sort(key=lambda x: (x["status"] == "disposed", -x["score"]))
+    al = []
+    for a in open_alerts():
+        if cid in db.unj(a["cases"], []):
+            bs = sorted({db.q1("SELECT bureau FROM cases WHERE id=?", (x,))["bureau"] for x in db.unj(a["cases"], [])})
+            al.append({**_alert_row(a, bs, u), "why": a["why"], "reasons": db.unj(a["reasons"], [])})
+    audit.log(u["id"], u["role"], "case.viewed", cid, {"full_text": vis})
+    match = db.unj(c["match"], {})
+    return {
+        **r, "description": c["description"] if vis else None,
+        "complainant": c["complainant"] if vis and (u["role"] == "management" or c["bureau"] == u.get("bureau")) else mask(c["complainant"]),
+        "complainant_type": c["complainant_type"], "institution_detail": inst, "match": match,
+        "category_ai": db.unj(c["category_ai"], []), "history": hist, "related": related, "coordination": al,
+        "spans": resolve.spans(c["description"], c["permanent_id"]) if vis else [],
+        "inst_spans": resolve.spans(c["inst_text"], c["permanent_id"]),
+        "can_act": u["role"] == "management" or (u["role"] == "officer" and c["bureau"] == u.get("bureau")),
+        "actions": [{"kind": k, "label": ACTIONS[k]["label"]} for k in OFFICER_ACTIONS],
+        "bureaus": [{"id": k, "name": v["name"]} for k, v in settings.get()["bureaus"].items()],
+        "categories": [{"id": k, "label": v["label"], "bureau": v["bureau"]} for k, v in settings.get()["categories"].items()],
+        "suggested_bureau": settings.category(c["category"])["bureau"],
+    }
 
 
-def _doc_or_404(doc_id: str, u: dict) -> dict:
-    d = db.q1("SELECT * FROM documents WHERE id=?", (doc_id,))
-    if not d:
-        raise HTTPException(404)
-    a = db.q1("SELECT permanent_id FROM applications WHERE id=?", (d["application_id"],))
-    _can_see_app(u, a)
-    return d
+class ActionIn(BaseModel):
+    kind: str
+    remarks: str = ""
+    acknowledged: bool = False
+    reason: str = ""
+    to_bureau: str | None = None
 
 
-def _raw(d: dict) -> bytes:
-    ext = Path(d["filename"]).suffix.lower()
-    return (STORE / f"{d['sha256']}{ext}").read_bytes()
+@app.post("/api/cases/{cid:path}/precheck")
+def case_precheck(cid: str, body: ActionIn, u=Depends(user)):
+    return {"warnings": overlap.precheck(_case(cid), body.kind)}
 
 
-@app.get("/api/documents/{doc_id}/page/{n}.png")
-def page_png(doc_id: str, n: int, t: str | None = None):
-    u = user(t)
-    d = _doc_or_404(doc_id, u)
-    p = docmodel.render_page(_raw(d), d["sha256"], n, "image" if d["mime"].startswith("image") else "pdf")
-    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "max-age=3600"})
-
-
-@app.get("/api/documents/{doc_id}/file")
-def doc_file(doc_id: str, t: str | None = None):
-    u = user(t)
-    d = _doc_or_404(doc_id, u)
-    audit.log(u["id"], u["role"], "document.downloaded", doc_id, {"sha256": d["sha256"]})
-    return Response(_raw(d), media_type=d["mime"], headers={"Content-Disposition": f'inline; filename="{d["filename"]}"'})
-
-
-@app.get("/api/documents/{doc_id}/revision/{k}.png")
-def revision_png(doc_id: str, k: int, page: int = 0, t: str | None = None):
-    """Render an earlier saved revision of a PDF (recovered from incremental updates)."""
-    from .forensics.pdf import revisions
-    u = user(t)
-    d = _doc_or_404(doc_id, u)
-    raw = _raw(d)
-    revs = revisions(raw)["revisions"]
-    if k >= len(revs):
-        raise HTTPException(404)
-    out = RENDER / f"{d['sha256']}_rev{k}_{page}.png"
-    if not out.exists():
-        pdf = pymupdf.open(stream=raw[:revs[k]["end"]], filetype="pdf")
-        pdf[page].get_pixmap(matrix=pymupdf.Matrix(110 / 72, 110 / 72)).save(out)
-    return FileResponse(out, media_type="image/png")
-
-
-@app.get("/api/aph/page/{n}.png")
-def aph_page(n: int):
-    out = RENDER / f"aph_{n}.png"
-    if not out.exists():
-        pdf = pymupdf.open(APH_PDF)
-        pdf[n].get_pixmap(matrix=pymupdf.Matrix(110 / 72, 110 / 72)).save(out)
-    return FileResponse(out, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
-
-
-@app.get("/api/network")
-def network(u=Depends(need(*ROLES_READ_ALL))):
-    return graph.network()
-
-
-@app.get("/api/verifications")
-def verification_queue(status: str | None = None, u=Depends(need(*ROLES_READ_ALL))):
-    rows = db.q("SELECT v.*, d.filename, d.doc_type, a.permanent_id, i.name FROM verifications v JOIN documents d ON d.id=v.document_id "
-                "JOIN applications a ON a.id=v.application_id LEFT JOIN institutions i ON i.permanent_id=a.permanent_id "
-                + ("WHERE v.status=? " if status else "") + "ORDER BY v.ts DESC", (status,) if status else ())
-    for r in rows:
-        resp = db.unj(r["response"], {})
-        r.update({"request": db.unj(r["request"], {}), "checks": resp.get("checks", []), "letter": resp.get("letter"),
-                  "resolution": resp.get("resolution"), "response": resp.get("response")})
-    return rows
-
-
-class Resolve(BaseModel):
-    status: str
-    note: str
-
-
-@app.post("/api/verifications/{vid}/resolve")
-def resolve_verification(vid: str, body: Resolve, u=Depends(need("verifier", "admin"))):
-    if body.status not in ("verified", "mismatch", "expired", "manual_review", "pending"):
-        raise HTTPException(400, "bad status")
-    if len(body.note.strip()) < 5:
-        raise HTTPException(400, "a note describing how the source was confirmed is required")
-    v = db.q1("SELECT * FROM verifications WHERE id=?", (vid,))
-    if not v:
-        raise HTTPException(404)
-    resp = db.unj(v["response"], {})
-    resp["resolution"] = {"by": u["name"], "role": u["role"], "status": body.status, "note": body.note,
-                          "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "previous": v["status"]}
-    with db.tx() as c:
-        c.execute("UPDATE verifications SET status=?, response=? WHERE id=?", (body.status, db.j(resp), vid))
-    audit.log(u["id"], u["role"], "verification.resolved_manually", vid, {"from": v["status"], "to": body.status, "note": body.note})
-    pipeline.refresh_network()
+@app.post("/api/cases/{cid:path}/action")
+def case_action(cid: str, body: ActionIn, u=Depends(user)):
+    c = _case(cid)
+    _may_act(u, c)
+    if body.kind == "transferred" and (not body.to_bureau or body.to_bureau == c["bureau"]):
+        raise HTTPException(400, "choose the bureau to transfer to")
+    if body.kind not in OFFICER_ACTIONS + ["transferred"]:
+        raise HTTPException(400, "unknown action")
+    if body.acknowledged and not body.reason.strip() and overlap.precheck(c, body.kind):
+        raise HTTPException(400, "give a reason for going ahead")
+    try:
+        service.add_action(cid, body.kind, body.remarks, u["name"], u["role"], acknowledged=body.acknowledged,
+                           reason=body.reason, to_bureau=body.to_bureau)
+    except service.Blocked as e:
+        return JSONResponse({"detail": "coordination check", "warnings": e.warnings}, status_code=409)
     return {"ok": True}
 
 
-class Review(BaseModel):
-    decision: str      # confirm | dismiss
-    reason: str
+class CategoryIn(BaseModel):
+    category: str
 
 
-@app.post("/api/findings/{fid}/review")
-def review_finding(fid: str, body: Review, u=Depends(need("scrutiny_officer", "admin"))):
-    f = db.q1("SELECT * FROM findings WHERE id=?", (fid,))
-    if not f:
-        raise HTTPException(404)
-    if body.decision not in ("confirm", "dismiss"):
-        raise HTTPException(400)
-    if len(body.reason.strip()) < 5:
-        raise HTTPException(400, "a reason is required for every review")
-    db.insert("reviews", {"finding_id": fid, "application_id": f["application_id"], "actor": u["name"], "role": u["role"],
-                          "decision": body.decision, "reason": body.reason, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")})
-    audit.log(u["id"], u["role"], f"finding.{body.decision}ed", fid, {"rule": f["rule_id"], "reason": body.reason, "app": f["application_id"]})
+@app.post("/api/cases/{cid:path}/category")
+def case_category(cid: str, body: CategoryIn, u=Depends(user)):
+    c = _case(cid)
+    _may_act(u, c)
+    if body.category not in settings.get()["categories"]:
+        raise HTTPException(400, "unknown category")
+    db.update("cases", "id", cid, {"category": body.category, "due_on": service.due_for(body.category, c["received_on"])})
+    audit.log(u["id"], u["role"], "case.category", cid, {"from": c["category"], "to": body.category})
+    if c["permanent_id"]:
+        overlap.refresh(c["permanent_id"], actor=u["name"])
     return {"ok": True}
 
 
-class Decision(BaseModel):
-    recommendation: str   # recommend_eoa | deficiency_letter | refer_evc | refer_verification
-    note: str
+class InstIn(BaseModel):
+    permanent_id: str | None = None
 
 
-ADVERSE = {"deficiency_letter", "refer_evc", "refer_verification"}
-
-
-@app.post("/api/applications/{app_id}/decision")
-def decision(app_id: str, body: Decision, u=Depends(need("scrutiny_officer"))):
-    """Recommendation by a human officer. Safeguard: adverse recommendations require every
-    critical/high automated finding to have been reviewed by a person first."""
-    a = db.q1("SELECT * FROM applications WHERE id=?", (app_id,))
-    if not a:
-        raise HTTPException(404)
-    pending = db.q("SELECT id, title FROM findings f WHERE application_id=? AND status='fail' AND severity IN ('critical','high') "
-                   "AND NOT EXISTS (SELECT 1 FROM reviews r WHERE r.finding_id=f.id)", (app_id,))
-    if body.recommendation in ADVERSE and pending:
-        raise HTTPException(409, {"message": "Review each critical/high automated finding before an adverse recommendation.",
-                                  "unreviewed": pending})
-    db.insert("reviews", {"finding_id": "__decision__", "application_id": app_id, "actor": u["name"], "role": u["role"],
-                          "decision": body.recommendation, "reason": body.note, "ts": datetime.now(timezone.utc).isoformat(timespec="seconds")})
-    audit.log(u["id"], u["role"], "application.recommendation", app_id, {"recommendation": body.recommendation, "note": body.note})
+@app.post("/api/cases/{cid:path}/institution")
+def case_institution(cid: str, body: InstIn, u=Depends(user)):
+    c = _case(cid)
+    _may_act(u, c)
+    if body.permanent_id and body.permanent_id not in insts():
+        raise HTTPException(404, "institution not found")
+    service.confirm_institution(cid, body.permanent_id, u["name"], u["role"])
     return {"ok": True}
 
 
-# ------------------------------------------------------------------------------------ rules & sources
-
-@app.get("/api/rules")
-def rules(u=Depends(user)):
-    return engine.ruleset()
-
-
-class RulePatch(BaseModel):
-    enabled: bool | None = None
-    params: dict | None = None
+class LinkIn(BaseModel):
+    a: str
+    b: str
+    kind: str
     reason: str = ""
 
 
-@app.put("/api/rules/{rule_id}")
-def patch_rule(rule_id: str, body: RulePatch, u=Depends(need("admin"))):
-    base = {r["id"]: r for r in engine._load()["rules"]}
-    if rule_id not in base:
-        raise HTTPException(404)
-    cur = db.q1("SELECT * FROM rule_overrides WHERE rule_id=?", (rule_id,))
-    enabled = body.enabled if body.enabled is not None else (bool(cur["enabled"]) if cur else True)
-    params = {**(db.unj(cur["params"], {}) if cur else {}), **(body.params or {})}
-    db.insert("rule_overrides", {"rule_id": rule_id, "enabled": int(enabled), "params": params, "updated_by": u["name"],
-                                 "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}, replace=True)
-    audit.log(u["id"], u["role"], "rule.changed", rule_id, {"enabled": enabled, "params": params, "reason": body.reason})
+@app.post("/api/links")
+def link(body: LinkIn, u=Depends(need("officer", "management"))):
+    a, b = _case(body.a), _case(body.b)
+    if u["role"] == "officer" and u["bureau"] not in (a["bureau"], b["bureau"]):
+        raise HTTPException(403, "you can link cases of your own bureau only")
+    if body.kind not in ("same", "not_same"):
+        raise HTTPException(400, "kind must be same or not_same")
+    service.set_link(body.a, body.b, body.kind, u["name"], u["role"], body.reason)
     return {"ok": True}
 
 
-@app.get("/api/sources")
-def sources(u=Depends(need(*ROLES_READ_ALL))):
-    return registry.sources()
+class NewCase(BaseModel):
+    bureau: str | None = None
+    source: str = "Letter"
+    ext_ref: str | None = None
+    received_on: str | None = None
+    complainant: str = ""
+    complainant_type: str = "Student"
+    contact: str = ""
+    inst_text: str = ""
+    subject: str = ""
+    description: str = ""
+    category: str | None = None
+    permanent_id: str | None = None
 
 
-class SourcePatch(BaseModel):
-    available: bool
+class AnalyseIn(BaseModel):
+    complainant: str = ""
+    inst_text: str = ""
+    subject: str = ""
+    description: str = ""
+    bureau: str | None = None
 
 
-@app.put("/api/sources/{name}")
-def patch_source(name: str, body: SourcePatch, u=Depends(need("admin"))):
-    registry.set_available(name, body.available)
-    audit.log(u["id"], u["role"], "source.availability", name, {"available": body.available})
+@app.post("/api/analyse")
+def analyse(body: AnalyseIn, u=Depends(user)):
+    out = service.analyse(body.inst_text, body.subject, body.description, body.bureau or u.get("bureau"), complainant=body.complainant)
+    out["inst_spans"] = resolve.spans(body.inst_text, out["match"]["permanent_id"] or (out["match"]["candidates"][0]["permanent_id"] if out["match"]["candidates"] else None))
+    return out
+
+
+@app.post("/api/cases")
+def new_case(body: NewCase, u=Depends(need("officer", "management"))):
+    bureau = body.bureau or u.get("bureau")
+    if u["role"] == "officer" and bureau != u["bureau"]:
+        raise HTTPException(403, "you can register cases for your own bureau only")
+    if not body.description.strip() or not body.inst_text.strip():
+        raise HTTPException(400, "institution and complaint text are required")
+    data = body.model_dump()
+    data["bureau"] = bureau
+    r = service.create_case(data, u["name"], u["role"])
+    return {"id": r["id"]}
+
+
+@app.post("/api/import")
+async def import_csv(file: UploadFile = File(...), commit: int = 0, u=Depends(need("officer", "management"))):
+    """A bureau's register (CSV/Excel export). Columns are matched by name; each row is analysed like a new case."""
+    raw = (await file.read()).decode("utf-8-sig", errors="replace")
+    rows = list(csv.DictReader(io.StringIO(raw)))
+    if not rows:
+        raise HTTPException(400, "empty file")
+    cols = {k.lower().strip(): k for k in rows[0]}
+
+    def col(*names):
+        for n in names:
+            for k, orig in cols.items():
+                if n in k:
+                    return orig
+        return None
+
+    m = {"ref": col("ref", "registration", "file no", "case"), "date": col("date", "received"), "who": col("complainant", "name"),
+         "contact": col("contact", "phone", "mobile", "email"), "inst": col("institution", "college", "institute"),
+         "subject": col("subject", "title"), "text": col("description", "complaint", "details", "grievance", "text")}
+    if not m["inst"] or not m["text"]:
+        raise HTTPException(400, "need at least an institution column and a complaint text column")
+    bureau = u.get("bureau") or "PGRC"
+    preview = []
+    for r in rows[:200]:
+        g = lambda k: (r.get(m[k]) or "").strip() if m[k] else ""
+        a = service.analyse(g("inst"), g("subject"), g("text"), bureau)
+        item = {"ref": g("ref"), "inst_text": g("inst"), "subject": g("subject"), "match": a["match"]["state"],
+                "institution": (a["match"]["candidates"][0]["name"] if a["match"]["candidates"] else None),
+                "confidence": a["match"]["confidence"], "category": a["categories"][0]["label"],
+                "suggested_bureau": a["suggested_bureau"], "duplicates": [x["case"] for x in a["possible_duplicates"]]}
+        if commit:
+            rd = g("date")
+            try:
+                rd = date.fromisoformat(rd).isoformat() if rd else None
+            except ValueError:
+                rd = None
+            c = service.create_case({"bureau": bureau, "source": "Register import", "ext_ref": g("ref") or None, "received_on": rd,
+                                     "complainant": g("who"), "contact": g("contact"), "inst_text": g("inst"), "subject": g("subject"),
+                                     "description": g("text")}, u["name"], u["role"])
+            item["id"] = c["id"]
+        preview.append(item)
+    audit.log(u["id"], u["role"], "register.imported" if commit else "register.previewed", file.filename or "upload", {"rows": len(preview)})
+    return {"columns": m, "rows": preview, "committed": bool(commit)}
+
+
+# ------------------------------------------------------------------------------------ institutions
+
+@app.get("/api/institutions")
+def institutions(q: str = "", u=Depends(user)):
+    counts = defaultdict(Counter)
+    for c in db.q("SELECT permanent_id, bureau, status FROM cases WHERE permanent_id IS NOT NULL"):
+        counts[c["permanent_id"]]["total"] += 1
+        if c["status"] != "disposed":
+            counts[c["permanent_id"]][c["bureau"]] += 1
+            counts[c["permanent_id"]]["open"] += 1
+    al = Counter(a["permanent_id"] for a in open_alerts() if a["kind"] != "parallel")
+    rows = list(insts().values())
+    if q.strip():
+        m = resolve.resolve(q, "")
+        ids = [c["permanent_id"] for c in m["candidates"] if c["confidence"] >= 0.4]
+        direct = [r for r in rows if q.lower() in (r["name"] + r["permanent_id"] + r["city"]).lower()]
+        rows = direct + [insts()[i] for i in ids if insts()[i] not in direct]
+    out = []
+    for r in rows:
+        cnt = counts[r["permanent_id"]]
+        out.append({**r, "aliases": db.unj(r["aliases"], []), "total": cnt["total"], "open": cnt["open"],
+                    "open_by_bureau": {b: n for b, n in cnt.items() if b not in ("total", "open")}, "alerts": al[r["permanent_id"]]})
+    if not q.strip():
+        out.sort(key=lambda r: (-r["alerts"], -r["open"], r["name"]))
+    return out
+
+
+@app.get("/api/institutions/{pid}")
+def institution(pid: str, u=Depends(user)):
+    inst = insts().get(pid)
+    if not inst:
+        raise HTTPException(404, "institution not found")
+    amap = alerts_by_case()
+    cs = db.q("SELECT * FROM cases WHERE permanent_id=? ORDER BY received_on", (pid,))
+    rows = [row(c, u, amap) for c in cs]
+    lanes = defaultdict(list)
+    for c, r in zip(cs, rows):
+        acts = db.q("SELECT ts, kind, bureau, to_bureau FROM actions WHERE case_id=? ORDER BY ts, id", (c["id"],))
+        segs, cur, start = [], (acts[0]["bureau"] if acts else c["bureau"]), c["received_on"]
+        for a in acts:
+            if a["kind"] == "transferred" and a["to_bureau"]:
+                segs.append({"bureau": cur, "from": start, "to": a["ts"][:10], "moved_to": a["to_bureau"]})
+                cur, start = a["to_bureau"], a["ts"][:10]
+        segs.append({"bureau": cur, "from": start, "to": c["disposed_on"] or today().isoformat()})
+        for s in segs:
+            lanes[s["bureau"]].append({"case": c["id"], "from": s["from"], "to": s["to"], "status": c["status"] if "moved_to" not in s else "transferred",
+                                       "moved_to": s.get("moved_to"), "label": r["category_label"], "alerts": [a["kind"] for a in r["alerts"]],
+                                       "events": [{"ts": a["ts"][:10], "kind": a["kind"], "label": ACTIONS[a["kind"]]["label"]}
+                                                  for a in acts if s["from"] <= a["ts"][:10] <= s["to"] and a["kind"] not in ("note", "linked", "received")]})
+    al = []
+    for a in db.q("SELECT * FROM coordination WHERE permanent_id=? ORDER BY created_at DESC", (pid,)):
+        bs = sorted({db.q1("SELECT bureau FROM cases WHERE id=?", (x,))["bureau"] for x in db.unj(a["cases"], [])})
+        al.append({**_alert_row(a, bs, u), "why": a["why"], "reasons": db.unj(a["reasons"], [])})
+    cats = Counter(r["category_label"] for r in rows)
+    return {**inst, "aliases": db.unj(inst["aliases"], []), "cases": rows, "lanes": dict(lanes), "alerts": al,
+            "categories": cats.most_common(), "today": today().isoformat(),
+            "bureaus": {k: v["name"] for k, v in settings.get()["bureaus"].items()}}
+
+
+# ------------------------------------------------------------------------------------ coordination
+
+@app.get("/api/coordination")
+def coordination(status: str = "open", kind: str = "", u=Depends(user)):
+    if status == "open":
+        rows = db.q("SELECT * FROM coordination WHERE status IN ('open','acknowledged') ORDER BY created_at DESC")
+    else:
+        rows = db.q("SELECT * FROM coordination WHERE status IN ('resolved','cleared') ORDER BY updated_at DESC")
+    out = []
+    for a in rows:
+        if kind and a["kind"] != kind:
+            continue
+        bs = sorted({(db.q1("SELECT bureau FROM cases WHERE id=?", (x,)) or {}).get("bureau") for x in db.unj(a["cases"], [])})
+        out.append({**_alert_row(a, bs, u), "why": a["why"], "closed_note": a["closed_note"]})
+    out.sort(key=lambda a: a["created_at"] or "", reverse=True)
+    out.sort(key=lambda a: overlap.KIND[a["kind"]]["rank"])
+    unconfirmed = db.q("SELECT * FROM cases WHERE match_state IN ('confirm','unmatched') ORDER BY received_on DESC")
+    amap = alerts_by_case()
+    return {"alerts": out, "unconfirmed": [{**row(c, u, amap), "match": db.unj(c["match"], {})} for c in unconfirmed],
+            "kinds": overlap.KIND}
+
+
+@app.get("/api/coordination/{aid}")
+def coordination_detail(aid: str, u=Depends(user)):
+    a = db.q1("SELECT * FROM coordination WHERE id=?", (aid,))
+    if not a:
+        raise HTTPException(404, "not found")
+    amap = alerts_by_case()
+    cs = [db.q1("SELECT * FROM cases WHERE id=?", (x,)) for x in db.unj(a["cases"], [])]
+    rows = []
+    for c in cs:
+        r = row(c, u, amap)
+        r["history"] = [{"ts": h["ts"], "label": ACTIONS[h["kind"]]["label"], "bureau": h["bureau"], "remarks": h["remarks"] if r["visible"] else None}
+                        for h in db.q("SELECT * FROM actions WHERE case_id=? AND kind NOT IN ('note','linked') ORDER BY ts, id", (c["id"],))]
+        r["description"] = c["description"] if r["visible"] else None
+        rows.append(r)
+    bs = sorted({c["bureau"] for c in cs})
+    audit.log(u["id"], u["role"], "coordination.viewed", aid)
+    return {**_alert_row(a, bs, u), "why": a["why"], "reasons": db.unj(a["reasons"], []), "closed_note": a["closed_note"],
+            "case_rows": rows, "bureau_names": {k: v["name"] for k, v in settings.get()["bureaus"].items()},
+            "can_respond": u["role"] == "management" or (u.get("bureau") in bs)}
+
+
+class CoordIn(BaseModel):
+    note: str = ""
+    lead: str | None = None
+
+
+@app.post("/api/coordination/{aid}/{what}")
+def coordination_act(aid: str, what: str, body: CoordIn, u=Depends(need("officer", "management"))):
+    a = db.q1("SELECT * FROM coordination WHERE id=?", (aid,))
+    if not a:
+        raise HTTPException(404, "not found")
+    bs = sorted({db.q1("SELECT bureau FROM cases WHERE id=?", (x,))["bureau"] for x in db.unj(a["cases"], [])})
+    if u["role"] == "officer" and u["bureau"] not in bs:
+        raise HTTPException(403, "your bureau is not part of this alert")
+    now = service.now().isoformat()
+    acks = db.unj(a["acks"], {})
+    if what == "ack":
+        acks[u.get("bureau") or "MGMT"] = {"by": u["name"], "ts": now, "note": body.note}
+        status = "acknowledged" if all(b in acks for b in bs) else a["status"]
+        db.update("coordination", "id", aid, {"acks": acks, "status": status, "updated_at": now})
+        others = [b for b in bs if b != u.get("bureau")]
+        overlap.notify_bureaus(others, "coordination", f"{u.get('bureau') or 'Management'} acknowledged: {a['title']}", coord_id=aid, ts=now,
+                               key=f"{aid}:ack:{u.get('bureau')}:{now}")
+    elif what == "lead":
+        if body.lead not in settings.get()["bureaus"]:
+            raise HTTPException(400, "unknown bureau")
+        db.update("coordination", "id", aid, {"lead": body.lead, "updated_at": now})
+        overlap.notify_bureaus(bs, "coordination", f"Lead for '{a['title']}' set to {body.lead} by {u['name']}", coord_id=aid, ts=now,
+                               key=f"{aid}:lead:{now}")
+    elif what == "resolve":
+        if not body.note.strip():
+            raise HTTPException(400, "write what was agreed")
+        if u["role"] == "officer" and a["lead"] and u["bureau"] != a["lead"]:
+            raise HTTPException(403, f"only the lead bureau ({a['lead']}) or senior management can close this")
+        db.update("coordination", "id", aid, {"status": "resolved", "closed_note": body.note, "updated_at": now})
+        overlap.notify_bureaus(bs, "coordination", f"Closed: {a['title']} ({body.note})", coord_id=aid, ts=now, key=f"{aid}:resolved")
+    else:
+        raise HTTPException(404, "unknown")
+    audit.log(u["id"], u["role"], f"coordination.{what}", aid, body.model_dump())
     return {"ok": True}
 
 
-@app.post("/api/applications/{app_id}/reverify")
-def reverify(app_id: str, u=Depends(need("verifier", "admin", "scrutiny_officer"))):
-    """Retry source verification (e.g. after an issuer portal comes back online)."""
-    a = db.q1("SELECT * FROM applications WHERE id=?", (app_id,))
-    form = db.unj(a["form"], {})
-    docs = [{**d, "extraction": db.unj(d["extraction"], {}), "forensics": db.unj(d["forensics"], {}),
-             "classification": db.unj(d["classification"], {})} for d in db.q("SELECT * FROM documents WHERE application_id=?", (app_id,))]
-    ctx = pipeline._ctx(a, form, docs)
-    ctx["raw_by_doc"] = {d["id"]: _raw(d) for d in docs}
-    changed = 0
-    for v in db.q("SELECT * FROM verifications WHERE application_id=? AND status IN ('source_unavailable','pending')", (app_id,)):
-        d = next(x for x in docs if x["id"] == v["document_id"])
-        for nv in connectors.run(d, ctx):
-            if nv["connector"] == v["connector"]:
-                resp = {"response": nv["response"], "checks": nv["checks"], "letter": None, "evidence": nv["evidence"]}
-                with db.tx() as c:
-                    c.execute("UPDATE verifications SET status=?, source=?, response=?, detail=?, ts=? WHERE id=?",
-                              (nv["status"], nv["source"], db.j(resp), nv["detail"], nv["ts"], v["id"]))
-                audit.log(u["id"], u["role"], "verification.retried", v["id"], {"status": nv["status"]})
-                changed += 1
-    pipeline.refresh_network()
-    return {"retried": changed}
+# ------------------------------------------------------------------------------------ notifications
+
+def _my_notes(u: dict) -> list[dict]:
+    if u["role"] in ("management", "admin"):
+        rows = db.q("SELECT * FROM notifications WHERE to_bureau='MGMT' OR to_role='management' ORDER BY created_at DESC LIMIT 200")
+    else:
+        rows = db.q("SELECT * FROM notifications WHERE to_bureau=? ORDER BY created_at DESC LIMIT 200", (u["bureau"],))
+    for r in rows:
+        r["read"] = u["id"] in db.unj(r["read_by"], [])
+    return rows
 
 
-# ------------------------------------------------------------------------------------ audit
+@app.get("/api/notifications")
+def notifications(u=Depends(user)):
+    rows = _my_notes(u)
+    return {"rows": rows, "unread": sum(not r["read"] for r in rows)}
+
+
+class ReadIn(BaseModel):
+    ids: list[int] = []
+
+
+@app.post("/api/notifications/read")
+def notifications_read(body: ReadIn, u=Depends(user)):
+    ids = body.ids or [r["id"] for r in _my_notes(u)]
+    with db.tx() as cx:
+        for i in ids:
+            r = cx.execute("SELECT read_by FROM notifications WHERE id=?", (i,)).fetchone()
+            if r:
+                rb = set(db.unj(r["read_by"], []))
+                rb.add(u["id"])
+                cx.execute("UPDATE notifications SET read_by=? WHERE id=?", (db.j(sorted(rb)), i))
+    return {"ok": True}
+
+
+# ------------------------------------------------------------------------------------ reports
+
+def _report(frm: str, to: str) -> dict:
+    cases = db.q("SELECT * FROM cases")
+    recv = [c for c in cases if frm <= c["received_on"] <= to]
+    disp = [c for c in cases if c["disposed_on"] and frm <= c["disposed_on"] <= to]
+    open_end = [c for c in cases if c["received_on"] <= to and (c["status"] != "disposed" or (c["disposed_on"] or "") > to)]
+    end = min(d(to), today())
+
+    def stats(group_key):
+        g = defaultdict(lambda: {"received": 0, "disposed": 0, "in_time": 0, "open": 0, "overdue": 0, "days": []})
+        for c in recv:
+            g[group_key(c)]["received"] += 1
+        for c in disp:
+            k = g[group_key(c)]
+            k["disposed"] += 1
+            tl = timeline(c)
+            k["in_time"] += tl["state"] == "in_time"
+            k["days"].append(tl["age"])
+        for c in open_end:
+            k = g[group_key(c)]
+            k["open"] += 1
+            k["overdue"] += timeline({**c, "status": "under_process"}, end).get("state") == "overdue"
+        out = []
+        for name, v in g.items():
+            days = v.pop("days")
+            v["avg_days"] = round(sum(days) / len(days)) if days else None
+            v["in_time_pct"] = round(100 * v["in_time"] / v["disposed"]) if v["disposed"] else None
+            out.append({"name": name, **v})
+        return sorted(out, key=lambda r: -(r["received"] + r["open"]))
+
+    reg = lambda c: (insts().get(c["permanent_id"] or "") or {}).get("region") or "Not identified"
+    inst_name = lambda c: (insts().get(c["permanent_id"] or "") or {}).get("name") or "Not identified"
+    months = []
+    m0 = date(d(frm).year, d(frm).month, 1)
+    while m0 <= d(to):
+        m1 = date(m0.year + (m0.month == 12), m0.month % 12 + 1, 1)
+        months.append({"month": m0.strftime("%b %Y"), "received": sum(m0.isoformat() <= c["received_on"] < m1.isoformat() for c in cases),
+                       "disposed": sum(bool(c["disposed_on"]) and m0.isoformat() <= c["disposed_on"] < m1.isoformat() for c in cases)})
+        m0 = m1
+    ageing = Counter()
+    for c in open_end:
+        a = (end - d(c["received_on"])).days
+        ageing["0-21 days" if a <= 21 else "22-45 days" if a <= 45 else "46-90 days" if a <= 90 else "Over 90 days"] += 1
+    co = db.q("SELECT * FROM coordination WHERE created_at>=? AND substr(created_at,1,10)<=?", (frm, to))
+    return {
+        "from": frm, "to": to,
+        "totals": {"received": len(recv), "disposed": len(disp), "open_at_end": len(open_end),
+                   "disposal_rate": round(100 * len(disp) / max(1, len(recv))), "overlaps": len([a for a in co if a["kind"] != "parallel"])},
+        "bureau": stats(lambda c: c["bureau"]), "region": stats(reg), "category": stats(lambda c: settings.category(c["category"])["label"]),
+        "status": [{"name": STATUS[s], "n": sum(c["status"] == s for c in cases if c["received_on"] <= to)} for s in STATUS],
+        "institution": stats(inst_name)[:15], "monthly": months,
+        "ageing": [{"name": k, "n": ageing[k]} for k in ("0-21 days", "22-45 days", "46-90 days", "Over 90 days")],
+        "overlaps": [{"name": overlap.KIND[k]["label"], "raised": sum(a["kind"] == k for a in co),
+                      "resolved": sum(a["kind"] == k and a["status"] == "resolved" for a in co),
+                      "open": sum(a["kind"] == k and a["status"] in ("open", "acknowledged") for a in co)} for k in overlap.KIND],
+    }
+
+
+@app.get("/api/reports")
+def reports(frm: str = "", to: str = "", u=Depends(user)):
+    to = to or today().isoformat()
+    frm = frm or (today() - timedelta(days=89)).isoformat()
+    return _report(frm, to)
+
+
+@app.get("/api/reports.csv")
+def reports_csv(table: str, frm: str = "", to: str = "", u=Depends(user)):
+    to = to or today().isoformat()
+    frm = frm or (today() - timedelta(days=89)).isoformat()
+    rep = _report(frm, to)
+    rows = rep.get(table)
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(404, "no such table")
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    w.writeheader()
+    w.writerows(rows)
+    audit.log(u["id"], u["role"], "report.downloaded", table, {"from": frm, "to": to})
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{table}_{frm}_{to}.csv"'})
+
+
+# ------------------------------------------------------------------------------------ settings, audit, search
+
+@app.get("/api/settings")
+def get_settings(u=Depends(user)):
+    s = settings.get()
+    return {"settings": s, "overrides": settings.overrides(), "model": ai.backend()}
+
+
+class SettingIn(BaseModel):
+    key: str
+    value: object
+
+
+EDITABLE = ("categories.", "escalation", "matching.", "institution_reply_days")
+
+
+@app.put("/api/settings")
+def put_setting(body: SettingIn, u=Depends(need("admin"))):
+    if not body.key.startswith(EDITABLE):
+        raise HTTPException(400, "this setting cannot be changed here")
+    parts = body.key.split(".")
+    if parts[0] == "categories":
+        if len(parts) != 3 or parts[1] not in settings.get()["categories"] or parts[2] not in ("days", "bureau", "label"):
+            raise HTTPException(400, "unknown category setting")
+        if parts[2] == "days" and not (isinstance(body.value, int) and 1 <= body.value <= 365):
+            raise HTTPException(400, "days must be 1-365")
+        if parts[2] == "bureau" and body.value not in settings.get()["bureaus"]:
+            raise HTTPException(400, "unknown bureau")
+    settings.put(body.key, body.value, u["name"])
+    audit.log(u["id"], u["role"], "settings.changed", body.key, {"value": body.value})
+    if parts[0] == "categories" and parts[2] == "days":
+        for c in db.q("SELECT id, received_on FROM cases WHERE category=?", (parts[1],)):
+            db.update("cases", "id", c["id"], {"due_on": service.due_for(parts[1], c["received_on"])})
+        service.sweep()
+    return {"ok": True}
+
 
 @app.get("/api/audit")
-def audit_log(limit: int = 300, target: str | None = None, u=Depends(need(*ROLES_READ_ALL))):
+def get_audit(limit: int = 300, target: str = "", u=Depends(need("management", "admin", "officer"))):
     if target:
         rows = db.q("SELECT * FROM audit WHERE target LIKE ? ORDER BY seq DESC LIMIT ?", (f"%{target}%", limit))
     else:
@@ -461,175 +817,55 @@ def audit_log(limit: int = 300, target: str | None = None, u=Depends(need(*ROLES
     return {"entries": rows, "chain": audit.verify_chain()}
 
 
-# ------------------------------------------------------------------------------------ institution pre-check
-
-@app.post("/api/precheck")
-async def precheck(form: str = Form(...), declared: str = Form(...), files: list[UploadFile] = File(...), u=Depends(user)):
-    """Institution uploads its package *before* final submission and gets the same checks instantly."""
-    f = json.loads(form)
-    types = json.loads(declared)
-    if u["role"] == "institution" and f.get("permanent_id") != u["permanent_id"]:
-        raise HTTPException(403, "can only pre-check your own institution")
-    payload = [(up.filename, await up.read(), types.get(up.filename)) for up in files]
-    aid = pipeline.process(f, payload, source="precheck", actor=u["id"], role=u["role"])
-    return {"application_id": aid}
-
-
-@app.post("/api/precheck/{app_id}/resubmit")
-async def resubmit(app_id: str, declared: str = Form("{}"), files: list[UploadFile] = File(default=[]), form: str | None = Form(None),
-                   u=Depends(user)):
-    """Re-run the checks with some documents replaced and/or form fields corrected (a pre-check loop)."""
-    payload = [(up.filename, await up.read(), json.loads(declared).get(up.filename)) for up in files]
-    return _rerun(app_id, payload, json.loads(form) if form else None, u)
-
-
-def _rerun(app_id: str, new_files: list, form_patch: dict | None, u: dict) -> dict:
-    a = db.q1("SELECT * FROM applications WHERE id=?", (app_id,))
-    if not a:
-        raise HTTPException(404)
-    _can_see_app(u, a)
-    original = db.unj(a["form"], {})
-    if form_patch and "faculty" in form_patch:
-        form_patch = {**form_patch, "faculty": _restore_pans(form_patch["faculty"], original.get("faculty", []))}
-    form = {**original, **(form_patch or {})}
-    replace_types = {t for _, _, t in new_files if t != "infra_photo"}
-    old = [d for d in db.q("SELECT * FROM documents WHERE application_id=?", (app_id,)) if d["declared_type"] not in replace_types]
-    payload = [(d["filename"], _raw(d), d["declared_type"]) for d in old] + new_files
-    aid = pipeline.process(form, payload, source="precheck", actor=u["id"], role=u["role"])
-    audit.log(u["id"], u["role"], "application.rechecked", aid, {"previous": app_id, "replaced": sorted(replace_types),
-                                                                  "form_fields_changed": sorted((form_patch or {}).keys())})
-    return {"application_id": aid, "previous": app_id}
-
-
-FACULTY_COLS = ["name", "faculty_id", "designation", "qualification", "department", "date_of_joining", "dob", "pan", "gender"]
-
-
-def _restore_pans(rows: list[dict], previous: list[dict]) -> list[dict]:
-    """PANs are shown masked; when a downloaded list comes back, put the stored PAN back by faculty ID."""
-    by_id = {f.get("faculty_id"): f for f in previous if f.get("faculty_id")}
-    out = []
-    for r in rows:
-        r = {k: (str(v).strip() if v is not None else "") for k, v in r.items() if k in FACULTY_COLS}
-        if not r.get("name"):
-            continue
-        prev = by_id.get(r.get("faculty_id"))
-        if prev and (not r.get("pan") or r["pan"].upper().startswith("XXXXX")):
-            r["pan"] = prev.get("pan", "")
-            r.setdefault("dob", prev.get("dob", ""))
-        out.append(r)
-    return out
-
-
-def _parse_faculty_csv(text: str) -> list[dict]:
-    import csv
-    import io
-    rows = list(csv.DictReader(io.StringIO(text.lstrip("﻿"))))
-    return [{k.strip().lower().replace(" ", "_"): v for k, v in r.items() if k} for r in rows]
-
-
-@app.get("/api/precheck/{app_id}/fixes")
-def demo_fixes(app_id: str, u=Depends(user)):
-    """Corrected documents prepared for the demo (e.g. a renewed fire NOC), if any."""
-    a = db.q1("SELECT * FROM applications WHERE id=?", (app_id,))
-    _can_see_app(u, a)
-    d = DATA / "synthetic" / "demo" / a["permanent_id"] / "fixes"
-    return [{"file": p.name, "declared_type": p.stem.split("__")[0]} for p in sorted(d.glob("*"))] if d.exists() else []
-
-
-@app.post("/api/precheck/{app_id}/fixes/{name}")
-def apply_demo_fix(app_id: str, name: str, u=Depends(user)):
-    a = db.q1("SELECT * FROM applications WHERE id=?", (app_id,))
-    _can_see_app(u, a)
-    p = DATA / "synthetic" / "demo" / a["permanent_id"] / "fixes" / Path(name).name
-    if not p.exists():
-        raise HTTPException(404)
-    kind = p.stem.split("__")[0]
-    if kind == "faculty":
-        return _rerun(app_id, [], {"faculty": _parse_faculty_csv(p.read_text("utf-8"))}, u)
-    return _rerun(app_id, [(p.name.split("__", 1)[1], p.read_bytes(), kind)], None, u)
-
-
-# ------------------------------------------------------------------------------------ real EoA letter verification
-
-@app.post("/api/eoa/verify")
-async def verify_eoa(file: UploadFile = File(...), u=Depends(need(*ROLES_READ_ALL))):
-    return _verify_eoa(file.filename, await file.read(), u)
-
-
-@app.get("/api/eoa/samples")
-def eoa_samples(u=Depends(need(*ROLES_READ_ALL))):
-    p = DATA / "samples" / "samples.json"
-    return json.loads(p.read_text("utf-8")) if p.exists() else []
-
-
-@app.post("/api/eoa/samples/{sid}")
-def eoa_sample_verify(sid: str, u=Depends(need(*ROLES_READ_ALL))):
-    s = next((x for x in eoa_samples(u) if x["id"] == sid), None)
-    if not s:
-        raise HTTPException(404)
-    return {**_verify_eoa(s["file"], (DATA / "samples" / s["file"]).read_bytes(), u), "sample": s}
-
-
-def _verify_eoa(filename: str, raw: bytes, u: dict) -> dict:
-    t0 = time.time()
-    doc = docmodel.load(Path(filename), data=raw)
-    from .forensics import pdf as FP
-    fx = FP.analyse(doc)
-    ex = D.extract(doc, "eoa_letter")
-    letters = ex.get("letters", [])
-    tmp = {"id": "tmp-" + uuid.uuid4().hex[:6], "doc_type": "eoa_letter", "extraction": ex, "mime": "application/pdf"}
-    ver = connectors.aicte_eoa(tmp, {}) if letters else None
-    dummy = {"id": tmp["id"], "mime": "application/pdf", "doc_type": "eoa_letter", "forensics": fx}
-    ff = pipeline.forensic_findings(dummy, {"form": {}})
-    sha = docmodel.sha256_bytes(raw)
-    (STORE / f"{sha}.pdf").write_bytes(raw)
-    docmodel.render_page(raw, sha, 0, "pdf")
-    audit.log(u["id"], u["role"], "eoa.verified", filename, {"sha256": sha, "status": ver["status"] if ver else None})
-    return {"sha256": sha, "pages": len(doc.pages), "page_sizes": [[p.width, p.height] for p in doc.pages],
-            "letters": letters, "verification": ver, "forensics": fx, "findings": ff, "seconds": round(time.time() - t0, 1)}
-
-
-@app.get("/api/eoa/page/{sha}/{n}.png")
-def eoa_page(sha: str, n: int):
-    if not all(c in "0123456789abcdef" for c in sha):
-        raise HTTPException(400)
-    p = STORE / f"{sha}.pdf"
-    if not p.exists():
-        raise HTTPException(404)
-    return FileResponse(docmodel.render_page(p.read_bytes(), sha, n, "pdf"), media_type="image/png")
-
-
-@app.get("/api/ledger")
-def ledger(q: str = "", u=Depends(need(*ROLES_READ_ALL))):
-    rows = db.q("SELECT i.permanent_id, i.name, i.state, i.region, i.inst_type, i.source, COUNT(a.id) letters, "
-                "GROUP_CONCAT(a.academic_year) years FROM institutions i LEFT JOIN approvals a ON a.permanent_id=i.permanent_id "
-                "WHERE i.source='public_eoa' AND (i.name LIKE ? OR i.permanent_id LIKE ?) GROUP BY i.permanent_id ORDER BY i.name",
-                (f"%{q}%", f"%{q}%"))
-    corpus = json.loads((DATA / "corpus_stats.json").read_text("utf-8")) if (DATA / "corpus_stats.json").exists() else None
-    return {"institutions": rows, "corpus": corpus}
-
-
-@app.get("/api/ledger/{pid}")
-def ledger_inst(pid: str, u=Depends(need(*ROLES_READ_ALL))):
-    inst = db.q1("SELECT * FROM institutions WHERE permanent_id=?", (pid,))
-    appr = db.q("SELECT * FROM approvals WHERE permanent_id=? ORDER BY academic_year", (pid,))
-    for a in appr:
-        a["courses"] = db.q("SELECT * FROM approval_courses WHERE approval_id=?", (a["id"],))
-        a["deficiencies"] = db.unj(a["deficiencies"], [])
-    return {"institution": inst, "approvals": appr}
+@app.get("/api/search")
+def search(q: str, u=Depends(user)):
+    q = q.strip()
+    if len(q) < 2:
+        return {"cases": [], "institutions": []}
+    cs = db.q("SELECT id, bureau, status, permanent_id FROM cases WHERE id LIKE ? OR ext_ref LIKE ? LIMIT 8", (f"%{q}%", f"%{q}%"))
+    for c in cs:
+        c["institution"] = (insts().get(c["permanent_id"] or "") or {}).get("name")
+    m = resolve.resolve(q, "")
+    direct = [r for r in insts().values() if q.lower() in (r["name"] + " " + r["permanent_id"]).lower()]
+    seen = {r["permanent_id"] for r in direct}
+    fuzzy = [insts()[c["permanent_id"]] for c in m["candidates"] if c["confidence"] >= 0.45 and c["permanent_id"] not in seen]
+    return {"cases": cs, "institutions": [{"permanent_id": r["permanent_id"], "name": r["name"], "city": r["city"]} for r in (direct + fuzzy)[:8]]}
 
 
 @app.get("/api/eval")
-def eval_report(u=Depends(need(*ROLES_READ_ALL))):
+def get_eval(u=Depends(user)):
     p = DATA / "eval_report.json"
-    return json.loads(p.read_text("utf-8")) if p.exists() else {"missing": True}
+    if not p.exists():
+        raise HTTPException(404, "run scripts/evaluate.py")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+@app.get("/api/meta")
+def meta(u=Depends(user)):
+    s = settings.get()
+    return {"bureaus": [{"id": k, "name": v["name"]} for k, v in s["bureaus"].items()],
+            "regions": list(s["regions"].keys()),
+            "categories": [{"id": k, "label": v["label"], "bureau": v["bureau"], "days": v["days"]} for k, v in s["categories"].items()],
+            "statuses": [{"id": k, "label": v} for k, v in STATUS.items()], "today": today().isoformat()}
+
+
+# ------------------------------------------------------------------------------------ background timeline check
+
+def _sweeper():
+    while True:
+        try:
+            service.sweep()
+        except Exception:  # never let the background check stop the server
+            pass
+        time.sleep(900)
 
 
 @app.on_event("startup")
-def _warm():
-    for r in engine._load()["rules"]:
-        citations.locate(r["cite"]["quote"])
+def _start():
+    threading.Thread(target=lambda: (ai.backend(), _sweeper()), daemon=True).start()
 
+
+# ------------------------------------------------------------------------------------ static frontend
 
 DIST = ROOT / "frontend" / "dist"
 if DIST.exists():
@@ -637,7 +873,7 @@ if DIST.exists():
 
     @app.get("/{path:path}")
     def spa(path: str):
-        if path.startswith("api/"):
-            raise HTTPException(404)
         f = DIST / path
-        return FileResponse(f if path and f.is_file() else DIST / "index.html")
+        if path and f.is_file():
+            return FileResponse(f)
+        return FileResponse(DIST / "index.html")

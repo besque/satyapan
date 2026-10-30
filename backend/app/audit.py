@@ -20,8 +20,8 @@ def _digest(seq: int, ts: str, actor: str, role: str, action: str, target: str, 
     return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
-def log(actor: str, role: str, action: str, target: str, payload: Any = None) -> dict:
-    ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+def log(actor: str, role: str, action: str, target: str, payload: Any = None, ts: str | None = None) -> dict:
+    ts = ts or datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     body = json.dumps(payload or {}, sort_keys=True, ensure_ascii=False, default=str)
     with db.tx() as c:
         last = c.execute("SELECT seq, hash FROM audit ORDER BY seq DESC LIMIT 1").fetchone()

@@ -1,0 +1,162 @@
+# Samanvay configuration. An administrator can change every value here from the Settings page;
+# changes are stored as overrides and recorded in the activity log.
+
+bureaus:
+  PGRC: { name: Public Grievance Redressal Cell, short: PGRC }
+  RB:   { name: Regulation Bureau, short: RB }
+  ARC:  { name: Anti-Ragging Cell, short: ARC }
+  AB:   { name: Approval Bureau, short: AB }
+  RO:   { name: Regional Office, short: RO }
+
+# AICTE regional offices (aicte.gov.in "ROs Details").
+regions:
+  Central: Bhopal
+  Eastern: Kolkata
+  Northern: Kanpur
+  North-Western: Chandigarh
+  North-Eastern: Guwahati
+  South-Central: Hyderabad
+  Southern: Chennai
+  South-Western: Bengaluru
+  Western: Mumbai
+
+# Nature of complaint. `bureau` is the cell that normally handles it; `days` is the disposal
+# timeline in days. `describe` lines are used by the language model to recognise the category
+# (English and Hindi), so they are written as plain descriptions, not keywords.
+categories:
+  fee_refund:
+    label: Fee not refunded
+    bureau: PGRC
+    days: 21
+    describe:
+      - Student withdrew or cancelled admission and the institution has not refunded the fee.
+      - Refund of tuition fee and caution deposit pending after leaving the college.
+      - प्रवेश रद्द करने के बाद संस्थान ने शुल्क वापस नहीं किया।
+      - The college keeps the fee and does not return the money after the seat was surrendered.
+  certificates_withheld:
+    label: Original certificates withheld
+    bureau: PGRC
+    days: 21
+    describe:
+      - The institution is keeping the student's original marksheets and certificates and refuses to return them.
+      - College demands money before giving back original documents.
+      - Original 10th and 12th marksheets, transfer certificate or degree are held back by the college office.
+      - कॉलेज मूल प्रमाणपत्र और अंकतालिका वापस नहीं दे रहा है।
+      - कॉलेज छोड़ने के बाद भी संस्थान अंकतालिका, टीसी और मूल प्रमाणपत्र रोक कर रखता है और लौटाने के लिए पैसे मांगता है।
+  excess_fee:
+    label: Excess or capitation fee
+    bureau: RB
+    days: 60
+    describe:
+      - The institution charges more than the fee fixed by the fee regulatory committee or demands capitation or donation.
+      - Extra charges collected without receipt in the name of development fund.
+      - Compulsory extra payments for bus, uniform, training or other items over the approved fee.
+      - निर्धारित शुल्क से अधिक फीस और डोनेशन मांगा जा रहा है।
+  ragging:
+    label: Ragging
+    bureau: ARC
+    days: 7
+    describe:
+      - Senior students ragged, harassed or assaulted a junior student in the hostel or campus.
+      - Freshers are being forced by seniors and the college has taken no action against ragging.
+      - छात्रावास में सीनियर छात्रों द्वारा रैगिंग और मारपीट।
+  faculty_issues:
+    label: Faculty salary or faculty on paper
+    bureau: RB
+    days: 60
+    describe:
+      - Faculty members are not paid salary as per AICTE pay scale or salary is pending for months.
+      - The institution shows teachers on paper who do not actually teach; classes are not held.
+      - Faculty names listed for approval but those teachers are not working in the college (ghost faculty).
+      - शिक्षकों को महीनों से वेतन नहीं मिला और कागज़ों पर फर्जी फैकल्टी दिखाई गई है।
+  infrastructure:
+    label: Labs, library or facilities lacking
+    bureau: RB
+    days: 60
+    describe:
+      - The institution lacks laboratories, library books, computers, hostel or other facilities required for approval.
+      - Practical classes are not conducted because equipment is missing or broken.
+      - कॉलेज में प्रयोगशाला, पुस्तकालय और आवश्यक सुविधाएं नहीं हैं।
+  unapproved_admission:
+    label: Unapproved course or excess admission
+    bureau: RB
+    days: 60
+    describe:
+      - The institution admitted students to a course or seats that are not approved by AICTE or beyond the approved intake.
+      - College is running a programme without AICTE approval.
+      - बिना मान्यता वाले कोर्स में या स्वीकृत सीटों से अधिक प्रवेश दिया गया।
+  scholarship:
+    label: Scholarship or fee waiver not given
+    bureau: PGRC
+    days: 21
+    describe:
+      - The student's scholarship or tuition fee waiver was not credited or the institution asked the student to pay fees despite the scheme.
+      - Student admitted under the tuition fee waiver (TFW) scheme or with a post-matric scholarship is still being charged tuition fee.
+      - छात्रवृत्ति या शुल्क माफी का लाभ नहीं दिया गया।
+  exam_result:
+    label: Exam, result or degree delay
+    bureau: PGRC
+    days: 21
+    describe:
+      - Results, marksheets, degree or transcripts are delayed and the examination was not conducted properly.
+      - The college did not forward the examination form or admit card, so the student missed the university exam.
+      - परीक्षा परिणाम और डिग्री में देरी।
+  harassment:
+    label: Harassment or discrimination
+    bureau: PGRC
+    days: 21
+    describe:
+      - A student or staff member faces harassment, discrimination, threats or misbehaviour by institution staff or management.
+      - Student suspended or expelled without inquiry, or victimised for raising a complaint.
+      - संस्थान के कर्मचारियों द्वारा उत्पीड़न और धमकी।
+  approval_application:
+    label: Approval application (EoA, intake change)
+    bureau: AB
+    days: 45
+    describe:
+      - Application from the institution for extension of approval, increase in intake or a new course.
+
+# Reply time given to an institution when a bureau seeks its comments.
+institution_reply_days: 15
+
+# Escalation ladder. `at` is the share of the timeline used; reaching it notifies `to`.
+escalation:
+  - { at: 0.8, level: 0, to: officer, label: Due soon }
+  - { at: 1.0, level: 1, to: section_head, label: Overdue }
+  - { at: 1.5, level: 2, to: bureau_head, label: Escalated to bureau head }
+  - { at: 2.0, level: 3, to: management, label: Escalated to senior management }
+
+matching:
+  auto_link: 0.86        # institution confidence at or above this is linked automatically
+  margin: 0.08           # ...and must beat the next candidate by this much
+  same_matter: 0.70      # text similarity at or above this suggests the same matter
+  pattern_min: 3         # complaints from different people on one issue that form a pattern
+  pattern_window_days: 120
+
+# Actions that clash when two different bureaus take them on the same institution.
+# `same_matter: true` means only when the two cases are about the same matter.
+conflicts:
+  - id: approve-while-penal
+    a: [show_cause, penal_action, inquiry_ordered]
+    b: [recommended_approval, eoa_processing]
+    same_matter: false
+    title: Approval being processed while regulatory action is pending
+    why: One bureau is moving towards approval while another has issued a show-cause or ordered an inquiry on the same institution.
+  - id: closed-while-inquiry
+    a: [disposed_resolved]
+    b: [inquiry_ordered, show_cause]
+    same_matter: true
+    title: Closed as resolved while another bureau is still acting
+    why: One bureau closed the matter as resolved on the institution's reply while another bureau is acting on the same matter.
+  - id: asked-twice
+    a: [sought_reply]
+    b: [sought_reply]
+    same_matter: true
+    title: Institution asked twice for the same reply
+    why: Two bureaus have asked the institution to reply on the same matter. One reply, shared, avoids duplicate effort and conflicting answers.
+  - id: parallel-inquiry
+    a: [inquiry_ordered]
+    b: [inquiry_ordered]
+    same_matter: false
+    title: Two inquiries on the same institution
+    why: Two bureaus have ordered separate inquiries or visits. A joint visit saves effort.

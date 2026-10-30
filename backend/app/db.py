@@ -12,60 +12,64 @@ from .config import DB_PATH
 SCHEMA = """
 PRAGMA journal_mode=WAL;
 
--- Institutional records "already available in authorised AICTE systems".
--- Bootstrapped from real, publicly posted EoA letters (source='public_eoa') plus synthetic test institutions.
+-- Institution master (in production: the AICTE institution records, keyed by Permanent ID).
 CREATE TABLE IF NOT EXISTS institutions (
     permanent_id TEXT PRIMARY KEY,
-    name TEXT, trust TEXT, address TEXT, state TEXT, region TEXT, inst_type TEXT,
-    est_year INTEGER, lat REAL, lon REAL, source TEXT, extra TEXT
-);
-CREATE TABLE IF NOT EXISTS approvals (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    permanent_id TEXT, academic_year TEXT, application_id TEXT, fno TEXT,
-    date_of_approval TEXT, letter_printed TEXT, letter_kind TEXT,
-    source_sha TEXT, source_url TEXT, source_pages TEXT, deficiencies TEXT,
-    UNIQUE(permanent_id, academic_year, application_id)
-);
-CREATE TABLE IF NOT EXISTS approval_courses (
-    approval_id INTEGER, level TEXT, program TEXT, course TEXT, shift TEXT,
-    affiliating_body TEXT, intake_prev INTEGER, intake_curr INTEGER, nri TEXT, fn TEXT, is_new INTEGER
+    name TEXT, aliases TEXT, city TEXT, district TEXT, state TEXT, region TEXT,
+    inst_type TEXT, society TEXT, est_year INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS applications (
-    id TEXT PRIMARY KEY, permanent_id TEXT, category TEXT, academic_year TEXT,
-    form TEXT, status TEXT, lane TEXT, risk REAL, summary TEXT,
-    created_at TEXT, processed_at TEXT, source TEXT
+CREATE TABLE IF NOT EXISTS officers (
+    id TEXT PRIMARY KEY, name TEXT, bureau TEXT, rank TEXT, region TEXT
 );
-CREATE TABLE IF NOT EXISTS documents (
-    id TEXT PRIMARY KEY, application_id TEXT, declared_type TEXT, doc_type TEXT,
-    filename TEXT, sha256 TEXT, mime TEXT, pages INTEGER, page_sizes TEXT,
-    classification TEXT, extraction TEXT, forensics TEXT, created_at TEXT
+
+-- One complaint / case as held by the bureau that is handling it.
+CREATE TABLE IF NOT EXISTS cases (
+    id TEXT PRIMARY KEY, bureau TEXT, ext_ref TEXT, source TEXT,
+    received_on TEXT, complainant TEXT, complainant_type TEXT, contact_hash TEXT,
+    inst_text TEXT, permanent_id TEXT, match TEXT, match_state TEXT,
+    category TEXT, category_ai TEXT, subject TEXT, description TEXT, lang TEXT,
+    status TEXT, officer_id TEXT, last_action TEXT, last_action_on TEXT,
+    next_action TEXT, next_due TEXT, due_on TEXT, disposed_on TEXT, outcome TEXT,
+    esc_level INTEGER DEFAULT -1, created_at TEXT
 );
-CREATE TABLE IF NOT EXISTS findings (
-    id TEXT PRIMARY KEY, application_id TEXT, document_id TEXT, rule_id TEXT,
-    kind TEXT, severity TEXT, status TEXT, title TEXT, detail TEXT,
-    evidence TEXT, citation TEXT, remedy TEXT, confidence REAL, created_at TEXT
+CREATE INDEX IF NOT EXISTS ix_cases_inst ON cases(permanent_id);
+
+CREATE TABLE IF NOT EXISTS actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT, ts TEXT, kind TEXT,
+    bureau TEXT, actor TEXT, remarks TEXT, to_bureau TEXT, extra TEXT
 );
-CREATE TABLE IF NOT EXISTS verifications (
-    id TEXT PRIMARY KEY, application_id TEXT, document_id TEXT, connector TEXT,
-    status TEXT, source TEXT, simulated INTEGER, request TEXT, response TEXT,
-    detail TEXT, ts TEXT
+CREATE INDEX IF NOT EXISTS ix_actions_case ON actions(case_id);
+
+-- Officer decisions about whether two cases are the same matter.
+CREATE TABLE IF NOT EXISTS links (
+    a TEXT, b TEXT, kind TEXT, actor TEXT, reason TEXT, ts TEXT, PRIMARY KEY (a, b)
 );
-CREATE TABLE IF NOT EXISTS entities (
-    entity_type TEXT, key TEXT, display TEXT, permanent_id TEXT, application_id TEXT,
-    document_id TEXT, page INTEGER, bbox TEXT, extra TEXT
+
+-- Overlap alerts raised by the system and how the bureaus responded.
+CREATE TABLE IF NOT EXISTS coordination (
+    id TEXT PRIMARY KEY, permanent_id TEXT, kind TEXT, rule TEXT, title TEXT, why TEXT,
+    cases TEXT, reasons TEXT, lead TEXT, status TEXT, acks TEXT,
+    created_at TEXT, updated_at TEXT, closed_note TEXT
 );
-CREATE INDEX IF NOT EXISTS ix_entities_key ON entities(entity_type, key);
-CREATE TABLE IF NOT EXISTS reviews (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, finding_id TEXT, application_id TEXT,
-    actor TEXT, role TEXT, decision TEXT, reason TEXT, ts TEXT
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, to_bureau TEXT, to_role TEXT,
+    kind TEXT, case_id TEXT, coord_id TEXT, text TEXT, created_at TEXT, read_by TEXT DEFAULT '[]'
 );
+
+-- Language-model vectors for case text, cached so each text is read once.
+CREATE TABLE IF NOT EXISTS vectors (
+    case_id TEXT PRIMARY KEY, sha TEXT, vec BLOB
+);
+
+CREATE TABLE IF NOT EXISTS settings_override (
+    key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS audit (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, actor TEXT, role TEXT,
     action TEXT, target TEXT, payload TEXT, prev_hash TEXT, hash TEXT
-);
-CREATE TABLE IF NOT EXISTS rule_overrides (
-    rule_id TEXT PRIMARY KEY, enabled INTEGER, params TEXT, updated_by TEXT, updated_at TEXT
 );
 """
 
@@ -87,6 +91,19 @@ def conn() -> sqlite3.Connection:
         _conn = connect()
         _conn.executescript(SCHEMA)
     return _conn
+
+
+def reset() -> None:
+    """Drop everything (used by the demo seeder)."""
+    global _conn
+    with _lock:
+        if _conn is not None:
+            _conn.close()
+            _conn = None
+        for suffix in ("", "-wal", "-shm"):
+            p = DB_PATH.with_name(DB_PATH.name + suffix)
+            if p.exists():
+                p.unlink()
 
 
 @contextmanager
@@ -128,3 +145,10 @@ def insert(table: str, row: dict[str, Any], replace: bool = False) -> None:
     vals = [j(v) if isinstance(v, (dict, list)) else v for v in row.values()]
     with tx() as c:
         c.execute(f"{verb} INTO {table} ({cols}) VALUES ({qs})", vals)
+
+
+def update(table: str, key: str, key_val: Any, fields: dict[str, Any]) -> None:
+    sets = ",".join(f"{k}=?" for k in fields)
+    vals = [j(v) if isinstance(v, (dict, list)) else v for v in fields.values()]
+    with tx() as c:
+        c.execute(f"UPDATE {table} SET {sets} WHERE {key}=?", [*vals, key_val])
