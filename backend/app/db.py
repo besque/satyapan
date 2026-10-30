@@ -11,60 +11,84 @@ from .config import DB_PATH
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
 
--- Institution master (in production: the AICTE institution records, keyed by Permanent ID).
+-- Institution master (in production: AICTE institution records, keyed by Permanent ID).
 CREATE TABLE IF NOT EXISTS institutions (
-    permanent_id TEXT PRIMARY KEY,
-    name TEXT, aliases TEXT, city TEXT, district TEXT, state TEXT, region TEXT,
-    inst_type TEXT, society TEXT, est_year INTEGER
+    pid TEXT PRIMARY KEY, name TEXT, city TEXT, state TEXT, region TEXT, inst_type TEXT, trust TEXT,
+    est_year INTEGER, ownership TEXT, land TEXT, lease_until TEXT, building_year INTEGER,
+    programmes TEXT, source TEXT, source_url TEXT, extra TEXT
 );
 
-CREATE TABLE IF NOT EXISTS officers (
-    id TEXT PRIMARY KEY, name TEXT, bureau TEXT, rank TEXT, region TEXT
+-- Approval letters on record (previous cycles). Real ones come from public copies posted by institutions.
+CREATE TABLE IF NOT EXISTS letters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, pid TEXT, ay TEXT, kind TEXT, application_no TEXT,
+    issued_on TEXT, printed_on TEXT, deficiencies TEXT, courses TEXT, source TEXT, source_url TEXT, sha256 TEXT
 );
+CREATE INDEX IF NOT EXISTS ix_letters_pid ON letters(pid);
 
--- One complaint / case as held by the bureau that is handling it.
-CREATE TABLE IF NOT EXISTS cases (
-    id TEXT PRIMARY KEY, bureau TEXT, ext_ref TEXT, source TEXT,
-    received_on TEXT, complainant TEXT, complainant_type TEXT, contact_hash TEXT,
-    inst_text TEXT, permanent_id TEXT, match TEXT, match_state TEXT,
-    category TEXT, category_ai TEXT, subject TEXT, description TEXT, lang TEXT,
-    status TEXT, officer_id TEXT, last_action TEXT, last_action_on TEXT,
-    next_action TEXT, next_due TEXT, due_on TEXT, disposed_on TEXT, outcome TEXT,
-    esc_level INTEGER DEFAULT -1, created_at TEXT
+-- One application of the cycle. `stage`/`phase`/`holder` describe the step it is waiting on.
+CREATE TABLE IF NOT EXISTS applications (
+    id TEXT PRIMARY KEY, pid TEXT, ay TEXT, nature TEXT, submitted_on TEXT, region TEXT,
+    status TEXT, stage TEXT, phase TEXT, holder TEXT, step_id INTEGER, officer TEXT,
+    decided_on TEXT, decision TEXT, deficiencies TEXT, carried TEXT, detail TEXT,
+    risk TEXT, spare INTEGER, esc_level INTEGER DEFAULT -1, source TEXT
 );
-CREATE INDEX IF NOT EXISTS ix_cases_inst ON cases(permanent_id);
+CREATE INDEX IF NOT EXISTS ix_apps_pid ON applications(pid);
 
-CREATE TABLE IF NOT EXISTS actions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT, ts TEXT, kind TEXT,
-    bureau TEXT, actor TEXT, remarks TEXT, to_bureau TEXT, extra TEXT
+-- Every stage the application has been through (scrutiny, compliance, EVC, ...), including repeats.
+CREATE TABLE IF NOT EXISTS steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, app_id TEXT, stage TEXT, attempt INTEGER,
+    opened_on TEXT, closed_on TEXT, phase TEXT, holder TEXT, due_on TEXT,
+    meeting_on TEXT, mode TEXT, members TEXT, outcome TEXT, deficiencies TEXT, remarks TEXT,
+    actor TEXT, esc_level INTEGER DEFAULT -1, extra TEXT
 );
-CREATE INDEX IF NOT EXISTS ix_actions_case ON actions(case_id);
+CREATE INDEX IF NOT EXISTS ix_steps_app ON steps(app_id);
 
--- Officer decisions about whether two cases are the same matter.
-CREATE TABLE IF NOT EXISTS links (
-    a TEXT, b TEXT, kind TEXT, actor TEXT, reason TEXT, ts TEXT, PRIMARY KEY (a, b)
+-- Who held the ball, from when to when (application or compliance item).
+CREATE TABLE IF NOT EXISTS holds (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, ref TEXT, holder TEXT, from_on TEXT, to_on TEXT
 );
+CREATE INDEX IF NOT EXISTS ix_holds_ref ON holds(ref);
 
--- Overlap alerts raised by the system and how the bureaus responded.
-CREATE TABLE IF NOT EXISTS coordination (
-    id TEXT PRIMARY KEY, permanent_id TEXT, kind TEXT, rule TEXT, title TEXT, why TEXT,
-    cases TEXT, reasons TEXT, lead TEXT, status TEXT, acks TEXT,
-    created_at TEXT, updated_at TEXT, closed_note TEXT
+-- Readable history of applications and compliance items (the audit table is the tamper-evident copy).
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, app_id TEXT, item_id TEXT, on_date TEXT, ts TEXT,
+    kind TEXT, actor TEXT, text TEXT, extra TEXT
 );
+CREATE INDEX IF NOT EXISTS ix_events_app ON events(app_id);
+CREATE INDEX IF NOT EXISTS ix_events_item ON events(item_id);
 
-CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, to_bureau TEXT, to_role TEXT,
-    kind TEXT, case_id TEXT, coord_id TEXT, text TEXT, created_at TEXT, read_by TEXT DEFAULT '[]'
+-- Compliance items: undertakings, document renewals, security deposits, lease extensions.
+CREATE TABLE IF NOT EXISTS items (
+    id TEXT PRIMARY KEY, kind TEXT, pid TEXT, app_id TEXT, title TEXT, detail TEXT,
+    doc_type TEXT, cond TEXT, cite TEXT, consequence TEXT,
+    opened_on TEXT, due_on TEXT, status TEXT, holder TEXT, verify_by TEXT,
+    submitted_on TEXT, closed_on TEXT, closed_by TEXT, evidence TEXT, note TEXT,
+    esc_level INTEGER DEFAULT -1, source TEXT, source_url TEXT, extra TEXT
 );
+CREATE INDEX IF NOT EXISTS ix_items_pid ON items(pid);
 
--- Language-model vectors for case text, cached so each text is read once.
-CREATE TABLE IF NOT EXISTS vectors (
-    case_id TEXT PRIMARY KEY, sha TEXT, vec BLOB
+CREATE TABLE IF NOT EXISTS documents (
+    id TEXT PRIMARY KEY, pid TEXT, doc_type TEXT, number TEXT, issuer TEXT, issued_on TEXT,
+    valid_until TEXT, status TEXT, file_id TEXT, note TEXT, source TEXT, source_url TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_docs_pid ON documents(pid);
+
+-- Reminders, escalations and notices, exactly as sent (one row per message).
+CREATE TABLE IF NOT EXISTS alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT UNIQUE, on_date TEXT, to_office TEXT, audience TEXT,
+    channels TEXT, kind TEXT, level INTEGER, app_id TEXT, item_id TEXT, pid TEXT, text TEXT,
+    read_by TEXT DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS ix_alerts_office ON alerts(to_office);
+
+CREATE TABLE IF NOT EXISTS files (
+    id TEXT PRIMARY KEY, name TEXT, mime TEXT, path TEXT, sha256 TEXT, size INTEGER, uploaded_by TEXT, uploaded_on TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settings_override (
-    key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TEXT
+    key TEXT PRIMARY KEY, value TEXT, updated_by TEXT, updated_at TEXT, reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS audit (
@@ -132,22 +156,27 @@ def j(v: Any) -> str:
     return json.dumps(v, ensure_ascii=False, default=str)
 
 
-def unj(v: str | None, default: Any = None) -> Any:
+def unj(v: Any, default: Any = None) -> Any:
     if v is None or v == "":
         return default
+    if not isinstance(v, (str, bytes)):
+        return v        # already decoded
     return json.loads(v)
 
 
-def insert(table: str, row: dict[str, Any], replace: bool = False) -> None:
+def insert(table: str, row: dict[str, Any], replace: bool = False, ignore: bool = False) -> int:
     cols = ",".join(row)
     qs = ",".join("?" for _ in row)
-    verb = "INSERT OR REPLACE" if replace else "INSERT"
+    verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE" if ignore else "INSERT"
     vals = [j(v) if isinstance(v, (dict, list)) else v for v in row.values()]
     with tx() as c:
-        c.execute(f"{verb} INTO {table} ({cols}) VALUES ({qs})", vals)
+        cur = c.execute(f"{verb} INTO {table} ({cols}) VALUES ({qs})", vals)
+        return cur.lastrowid if cur.rowcount else 0
 
 
 def update(table: str, key: str, key_val: Any, fields: dict[str, Any]) -> None:
+    if not fields:
+        return
     sets = ",".join(f"{k}=?" for k in fields)
     vals = [j(v) if isinstance(v, (dict, list)) else v for v in fields.values()]
     with tx() as c:

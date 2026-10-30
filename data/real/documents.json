@@ -1,0 +1,30 @@
+[
+ {
+  "pid": "1-5884543",
+  "doc_type": "fire_noc",
+  "valid_until": "2024-03-15",
+  "issued_on": "2022-03-15",
+  "note": "Posted copy says 'renewed for a further period of two years' from 15 Mar 2022, so it was valid until 15 Mar 2024. A renewed certificate may exist but is not in the public disclosure.",
+  "source_url": "https://bmsce.ac.in/assets/files/MandatoryDisclosure/Fire%20and%20Safety.pdf",
+  "sha256": "306b474ebbf626cef7d1b2b7359f5ab76f1156675ac9cb3548b4051ca97714d2"
+ },
+ {
+  "pid": "1-5884543",
+  "doc_type": "occupancy",
+  "issued_on": "2019-11-25",
+  "valid_until": null,
+  "partial": true,
+  "note": "Posted copy is a partial occupancy certificate dated 25 Nov 2019; a partial or provisional certificate is accepted for two consecutive academic years only (Annexure-3).",
+  "source_url": "https://bmsce.ac.in/assets/files/MandatoryDisclosure/Occupancy%20Certificate.pdf",
+  "sha256": "24ca3a54a6224218c1ef29d727b65f369b15d592b6f7c5ae26a344c456db9920"
+ },
+ {
+  "pid": "1-10575091",
+  "doc_type": "fire_noc",
+  "valid_until": null,
+  "issued_on": null,
+  "note": "The file the college links as its fire safety certificate does not show an issuing office, certificate number or validity date, so its validity cannot be read. Needs checking by hand.",
+  "source_url": "https://drive.google.com/uc?export=download&id=1CMnz8qimKOX1NEsQGXHBfyAPJz4CiKnR",
+  "sha256": "2bd951ada2846f81622bc301b9af43a673737fb9706c6f2f7e5a3bbe01ef3ff1"
+ }
+]

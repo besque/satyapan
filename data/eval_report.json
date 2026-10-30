@@ -1,402 +1,880 @@
 {
- "model": {
-  "backend": "model",
-  "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
- },
- "institution_matching": {
-  "n": 315,
-  "overall": {
-   "auto_correct": 95.9,
-   "confirm_top_correct": 3.5,
-   "unmatched": 0.3,
-   "confirm_top_wrong": 0.3
-  },
-  "by_style": {
-   "full": {
-    "auto_correct": 40,
-    "confirm_top_correct": 2
-   },
-   "city": {
-    "auto_correct": 40,
-    "confirm_top_correct": 2
-   },
-   "abbrev": {
-    "auto_correct": 40,
-    "confirm_top_correct": 2
-   },
-   "acronym": {
-    "auto_correct": 41,
-    "unmatched": 1
-   },
-   "misspelt": {
-    "auto_correct": 80,
-    "confirm_top_correct": 4
-   },
-   "lower": {
-    "auto_correct": 40,
-    "confirm_top_wrong": 1,
-    "confirm_top_correct": 1
-   },
-   "hindi": {
-    "auto_correct": 17
-   },
-   "former": {
-    "auto_correct": 4
-   }
-  },
-  "misses": [
-   {
-    "text": "sri vanadurga college hosur",
-    "truth": "Sri Vanadurga Institute of Technology",
-    "got": "Sri Vanadurga College of Engineering",
-    "outcome": "confirm_top_wrong",
-    "confidence": 0.985
-   },
-   {
-    "text": "MP Chennai",
-    "truth": "Marinatheeram Polytechnic",
-    "got": "Marinatheeram Polytechnic",
-    "outcome": "unmatched",
-    "confidence": 0.348
-   }
-  ]
- },
- "nature_of_complaint": {
-  "n": 26,
-  "top1": 73.1,
-  "top3": 92.3,
+ "generated": "2026-10-30T15:53:18+00:00",
+ "routing": {
+  "natures": 22,
+  "cases": 78,
+  "passed": 78,
   "rows": [
    {
-    "expected": "Fee not refunded",
-    "got": "Fee not refunded",
-    "score": 0.591,
+    "nature": "eoa_self_disclosure",
+    "label": "Extension of Approval based on Self-Disclosure",
+    "scenario": "all_in_order",
+    "path": "Self-disclosure (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "Admission surrendered in the first week itself, still the institute has not paid back the 72,000 I deposited."
+    "problems": []
    },
    {
-    "expected": "Fee not refunded",
-    "got": "Fee not refunded",
-    "score": 0.713,
+    "nature": "eoa_self_disclosure",
+    "label": "Extension of Approval based on Self-Disclosure",
+    "scenario": "deficient_first",
+    "path": "Self-disclosure (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "Kindly help me get my money back, I left the course in September and the college says no refund."
+    "problems": []
    },
    {
-    "expected": "Fee not refunded",
-    "got": "Fee not refunded",
-    "score": 0.701,
+    "nature": "eoa_self_disclosure",
+    "label": "Extension of Approval based on Self-Disclosure",
+    "scenario": "deficient_late",
+    "path": "Self-disclosure (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
     "ok": true,
-    "lang": "hi",
-    "text": "सीट छोड़ने के तीन महीने बाद भी कॉलेज ने जमा किए पैसे नहीं लौटाए।"
+    "problems": []
    },
    {
-    "expected": "Original certificates withheld",
-    "got": "Exam, result or degree delay",
-    "score": 0.496,
-    "ok": false,
-    "lang": "en",
-    "text": "The principal says my mark sheets will be given only after I clear dues for the full course."
-   },
-   {
-    "expected": "Original certificates withheld",
-    "got": "Original certificates withheld",
-    "score": 0.686,
+    "nature": "nri_seats",
+    "label": "Seats for Non-Resident Indians",
+    "scenario": "all_in_order",
+    "path": "Self-disclosure (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "I need my school leaving certificate and 12th marks card back from the college for a new job."
+    "problems": []
    },
    {
-    "expected": "Original certificates withheld",
-    "got": "Original certificates withheld",
-    "score": 0.403,
+    "nature": "nri_seats",
+    "label": "Seats for Non-Resident Indians",
+    "scenario": "deficient_first",
+    "path": "Self-disclosure (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "hi",
-    "text": "कॉलेज ने मेरी 12वीं की मार्कशीट रोक रखी है, नौकरी के लिए चाहिए।"
+    "problems": []
    },
    {
-    "expected": "Excess or capitation fee",
-    "got": "Scholarship or fee waiver not given",
-    "score": 0.554,
-    "ok": false,
-    "lang": "en",
-    "text": "Every student was told to pay 40,000 'lab development charges' on top of the approved fee."
-   },
-   {
-    "expected": "Excess or capitation fee",
-    "got": "Excess or capitation fee",
-    "score": 0.363,
+    "nature": "nri_seats",
+    "label": "Seats for Non-Resident Indians",
+    "scenario": "deficient_late",
+    "path": "Self-disclosure (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
     "ok": true,
-    "lang": "en",
-    "text": "Seat was offered only if we paid 3 lakh in cash to the trust, apart from fees."
+    "problems": []
    },
    {
-    "expected": "Excess or capitation fee",
-    "got": "Scholarship or fee waiver not given",
-    "score": 0.608,
-    "ok": false,
-    "lang": "hi",
-    "text": "फीस के अलावा हर छात्र से 30 हजार नकद लिए गए, कोई रसीद नहीं।"
-   },
-   {
-    "expected": "Ragging",
-    "got": "Ragging",
-    "score": 0.444,
+    "nature": "conversion_level",
+    "label": "Conversion of Diploma level into Degree level (and vice-versa)",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "Second-years shaved the heads of freshers and made them dance at midnight in the hostel."
+    "problems": []
    },
    {
-    "expected": "Ragging",
-    "got": "Ragging",
-    "score": 0.465,
+    "nature": "conversion_level",
+    "label": "Conversion of Diploma level into Degree level (and vice-versa)",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "My brother is too scared to go back to the hostel because seniors hit him last week."
+    "problems": []
    },
    {
-    "expected": "Ragging",
-    "got": "Ragging",
-    "score": 0.663,
+    "nature": "conversion_level",
+    "label": "Conversion of Diploma level into Degree level (and vice-versa)",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "hi",
-    "text": "हॉस्टल में सीनियरों ने नए छात्रों को रात भर परेशान किया और पीटा।"
+    "problems": []
    },
    {
-    "expected": "Faculty salary or faculty on paper",
-    "got": "Faculty salary or faculty on paper",
-    "score": 0.725,
+    "nature": "conversion_level",
+    "label": "Conversion of Diploma level into Degree level (and vice-versa)",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "Teachers have been working without pay since June and many have left."
+    "problems": []
    },
    {
-    "expected": "Faculty salary or faculty on paper",
-    "got": "Faculty salary or faculty on paper",
-    "score": 0.608,
+    "nature": "name_change",
+    "label": "Change in name of Institution / affiliating University / type",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "Names of professors on the college website are of people who left years ago; no one teaches us."
+    "problems": []
    },
    {
-    "expected": "Faculty salary or faculty on paper",
-    "got": "Faculty salary or faculty on paper",
-    "score": 0.62,
+    "nature": "name_change",
+    "label": "Change in name of Institution / affiliating University / type",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "hi",
-    "text": "प्राध्यापकों का वेतन छह महीने से रुका हुआ है।"
+    "problems": []
    },
    {
-    "expected": "Labs, library or facilities lacking",
-    "got": "Labs, library or facilities lacking",
-    "score": 0.563,
+    "nature": "name_change",
+    "label": "Change in name of Institution / affiliating University / type",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
     "ok": true,
-    "lang": "en",
-    "text": "There is no computer centre, and the workshop machines have not worked for two years."
+    "problems": []
    },
    {
-    "expected": "Labs, library or facilities lacking",
-    "got": "Labs, library or facilities lacking",
-    "score": 0.616,
+    "nature": "new_programme",
+    "label": "New Programme / Level in an existing Institution",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "The college runs from two floors of a shopping complex; there is no playground or hostel."
+    "problems": []
    },
    {
-    "expected": "Labs, library or facilities lacking",
-    "got": "Labs, library or facilities lacking",
-    "score": 0.803,
+    "nature": "new_programme",
+    "label": "New Programme / Level in an existing Institution",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "hi",
-    "text": "लैब में कोई उपकरण नहीं है, लाइब्रेरी में किताबें नहीं।"
+    "problems": []
    },
    {
-    "expected": "Unapproved course or excess admission",
-    "got": "Unapproved course or excess admission",
-    "score": 0.473,
+    "nature": "new_programme",
+    "label": "New Programme / Level in an existing Institution",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "Sixty extra students were enrolled in mechanical beyond the sanctioned seats."
+    "problems": []
    },
    {
-    "expected": "Unapproved course or excess admission",
-    "got": "Exam, result or degree delay",
-    "score": 0.583,
-    "ok": false,
-    "lang": "en",
-    "text": "The diploma course we joined does not appear on the AICTE approved list."
-   },
-   {
-    "expected": "Scholarship or fee waiver not given",
-    "got": "Fee not refunded",
-    "score": 0.669,
-    "ok": false,
-    "lang": "en",
-    "text": "As an SC student my fee is paid by the state scheme, but the college still asks me to deposit the tuition."
-   },
-   {
-    "expected": "Scholarship or fee waiver not given",
-    "got": "Scholarship or fee waiver not given",
-    "score": 0.662,
+    "nature": "new_programme",
+    "label": "New Programme / Level in an existing Institution",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "I got admission under the fee waiver quota but now they want full tuition."
+    "problems": []
    },
    {
-    "expected": "Exam, result or degree delay",
-    "got": "Original certificates withheld",
-    "score": 0.458,
-    "ok": false,
-    "lang": "en",
-    "text": "Our sixth semester marks have not come even after five months."
-   },
-   {
-    "expected": "Exam, result or degree delay",
-    "got": "Exam, result or degree delay",
-    "score": 0.788,
+    "nature": "merger",
+    "label": "Merger of Institutions (same / different Trust, same campus or city)",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "Hall tickets were not issued by the college, so twenty of us missed the exam."
+    "problems": []
    },
    {
-    "expected": "Harassment or discrimination",
-    "got": "Harassment or discrimination",
-    "score": 0.516,
+    "nature": "merger",
+    "label": "Merger of Institutions (same / different Trust, same campus or city)",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
     "ok": true,
-    "lang": "en",
-    "text": "The head of department keeps making remarks about my caste and threatens to fail me."
+    "problems": []
    },
    {
-    "expected": "Harassment or discrimination",
-    "got": "Fee not refunded",
-    "score": 0.47,
-    "ok": false,
-    "lang": "en",
-    "text": "I was thrown out of the hostel after I spoke to a newspaper about the fees."
+    "nature": "merger",
+    "label": "Merger of Institutions (same / different Trust, same campus or city)",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "merger",
+    "label": "Merger of Institutions (same / different Trust, same campus or city)",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "eoa_after_break",
+    "label": "Extension of Approval after a break / restoration / hibernation",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "eoa_after_break",
+    "label": "Extension of Approval after a break / restoration / hibernation",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "eoa_after_break",
+    "label": "Extension of Approval after a break / restoration / hibernation",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "eoa_after_break",
+    "label": "Extension of Approval after a break / restoration / hibernation",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "fn_oci_seats",
+    "label": "Supernumerary seats for Foreign Nationals / OCI / Gulf",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "fn_oci_seats",
+    "label": "Supernumerary seats for Foreign Nationals / OCI / Gulf",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "fn_oci_seats",
+    "label": "Supernumerary seats for Foreign Nationals / OCI / Gulf",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "increase_intake",
+    "label": "Increase in intake / additional course",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "increase_intake",
+    "label": "Increase in intake / additional course",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "increase_intake",
+    "label": "Increase in intake / additional course",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "increase_intake",
+    "label": "Increase in intake / additional course",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "integrated_dual",
+    "label": "Integrated / Dual Degree course",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "integrated_dual",
+    "label": "Integrated / Dual Degree course",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "integrated_dual",
+    "label": "Integrated / Dual Degree course",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "integrated_dual",
+    "label": "Integrated / Dual Degree course",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "fpm",
+    "label": "Fellow Programme in Management",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "fpm",
+    "label": "Fellow Programme in Management",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "fpm",
+    "label": "Fellow Programme in Management",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "fpm",
+    "label": "Fellow Programme in Management",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "course_change",
+    "label": "Change in course name / merger of courses / reduction in intake",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "course_change",
+    "label": "Change in course name / merger of courses / reduction in intake",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "course_change",
+    "label": "Change in course name / merger of courses / reduction in intake",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "collaboration",
+    "label": "Collaboration and Twinning Programme",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "collaboration",
+    "label": "Collaboration and Twinning Programme",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "collaboration",
+    "label": "Collaboration and Twinning Programme",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "collaboration",
+    "label": "Collaboration and Twinning Programme",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "change_of_site",
+    "label": "Change of site / location",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "change_of_site",
+    "label": "Change of site / location",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "change_of_site",
+    "label": "Change of site / location",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "change_of_site",
+    "label": "Change of site / location",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "closure_institution",
+    "label": "Closure of the Institution",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "closure_institution",
+    "label": "Closure of the Institution",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "closure_institution",
+    "label": "Closure of the Institution",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "women_coed",
+    "label": "Women's Institution to Co-ed (and vice-versa)",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "women_coed",
+    "label": "Women's Institution to Co-ed (and vice-versa)",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "women_coed",
+    "label": "Women's Institution to Co-ed (and vice-versa)",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "closure_programme",
+    "label": "Closure of Programme(s) / Course(s)",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "closure_programme",
+    "label": "Closure of Programme(s) / Course(s)",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "closure_programme",
+    "label": "Closure of Programme(s) / Course(s)",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "bank_details",
+    "label": "Change in the bank details",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "bank_details",
+    "label": "Change in the bank details",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "bank_details",
+    "label": "Change in the bank details",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "trust_name_change",
+    "label": "Change in name of the Trust / Society / Company",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "trust_name_change",
+    "label": "Change in name of the Trust / Society / Company",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "trust_name_change",
+    "label": "Change in name of the Trust / Society / Company",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (deficiencies found) \u2192 EC decision (letter of deficiency issued)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "deemed_university",
+    "label": "Institution converted into a Deemed-to-be-University",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "deemed_university",
+    "label": "Institution converted into a Deemed-to-be-University",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "deemed_university",
+    "label": "Institution converted into a Deemed-to-be-University",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "deemed_university",
+    "label": "Institution converted into a Deemed-to-be-University",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "odl_online",
+    "label": "Online Learning / ODL courses",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "odl_online",
+    "label": "Online Learning / ODL courses",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "odl_online",
+    "label": "Online Learning / ODL courses",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "odl_online",
+    "label": "Online Learning / ODL courses",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 SHC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "new_institution",
+    "label": "New Technical Institution",
+    "scenario": "all_in_order",
+    "path": "Scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "new_institution",
+    "label": "New Technical Institution",
+    "scenario": "deficient_first",
+    "path": "Scrutiny (deficiencies found) \u2192 Compliance (compliance submitted) \u2192 Re-scrutiny (found in order) \u2192 EVC (found in order) \u2192 EC decision (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "new_institution",
+    "label": "New Technical Institution",
+    "scenario": "deficient_late",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
+   },
+   {
+    "nature": "new_institution",
+    "label": "New Technical Institution",
+    "scenario": "appeal",
+    "path": "Scrutiny (found in order) \u2192 EVC (deficiencies found) \u2192 EC decision (letter of deficiency issued) \u2192 Appeal (appeal filed) \u2192 SAC (recommended) \u2192 Council (approval granted)",
+    "ok": true,
+    "problems": []
    }
   ]
  },
- "same_matter": {
-  "threshold": 0.7,
-  "pairs": 16,
-  "precision": 100.0,
-  "recall": 75.0,
-  "cross_language_found": "4 of 4",
+ "rules": {
+  "cases": 17,
+  "passed": 17,
   "rows": [
    {
-    "truth": "same",
-    "score": 0.871,
-    "predicted_same": true,
-    "a": "I cancelled my MBA seat on 3 July; the refund of Rs 1,10,000 has not come.",
-    "b": "मैंने 3 जुलाई को एमबीए की सीट रद्द की थी, 1,10,000 रुपये की वापसी अब तक नहीं हुई।"
+    "rule": "Lease rule",
+    "case": "lease to 2031-06-30, longest course 4 years: EoA blocked from",
+    "expected": "2027-28",
+    "got": "2027-28",
+    "ok": true,
+    "cite": "CL_2_1_E"
    },
    {
-    "truth": "same",
-    "score": 0.833,
-    "predicted_same": true,
-    "a": "The college has kept my 10th and 12th originals and asks Rs 50,000 to return them.",
-    "b": "कॉलेज मेरे 10वीं और 12वीं के मूल प्रमाणपत्र लौटाने के लिए 50,000 रुपये मांग रहा है।"
+    "rule": "Lease rule",
+    "case": "lease to 2033-03-31, longest course 4 years: EoA blocked from",
+    "expected": "2029-30",
+    "got": "2029-30",
+    "ok": true,
+    "cite": "CL_2_1_E"
    },
    {
-    "truth": "same",
-    "score": 0.61,
-    "predicted_same": false,
-    "a": "Seniors beat my son in hostel block C on Saturday night.",
-    "b": "My son was assaulted by senior students in hostel C on the night of Saturday; he is in shock."
+    "rule": "Lease rule",
+    "case": "lease to 2032-07-01, longest course 5 years: EoA blocked from",
+    "expected": "2027-28",
+    "got": "2027-28",
+    "ok": true,
+    "cite": "CL_2_1_E"
    },
    {
-    "truth": "same",
-    "score": 0.762,
-    "predicted_same": true,
-    "a": "Rs 25,000 bus fee is compulsory even for students who live next to the college.",
-    "b": "College forces every student, even day scholars living nearby, to pay 25,000 as transport fee."
+    "rule": "Lease rule",
+    "case": "lease to 2040-06-30, longest course 2 years: EoA blocked from",
+    "expected": "2038-39",
+    "got": "2038-39",
+    "ok": true,
+    "cite": "CL_2_1_E"
    },
    {
-    "truth": "same",
-    "score": 0.78,
-    "predicted_same": true,
-    "a": "Salary of all teaching staff is pending from April.",
-    "b": "अप्रैल से सभी शिक्षकों का वेतन बकाया है।"
+    "rule": "Lease rule",
+    "case": "lease to 2060-12-31, longest course 4 years: EoA blocked from",
+    "expected": "2057-58",
+    "got": "2057-58",
+    "ok": true,
+    "cite": "CL_2_1_E"
    },
    {
-    "truth": "same",
-    "score": 0.686,
-    "predicted_same": false,
-    "a": "No chemistry lab; practicals are just written in the record book.",
-    "b": "There is no chemistry laboratory at all and we only copy practicals into our records."
+    "rule": "Security deposit",
+    "case": "intimated 29 Apr, on 2027-05-10",
+    "expected": "due",
+    "got": "due",
+    "ok": true,
+    "cite": "CL_2_25_F"
    },
    {
-    "truth": "same",
-    "score": 0.863,
-    "predicted_same": true,
-    "a": "My post-matric scholarship came to the college account but they still demand fees from me.",
-    "b": "छात्रवृत्ति कॉलेज के खाते में आ गई फिर भी कॉलेज मुझसे फीस मांग रहा है।"
+    "rule": "Security deposit",
+    "case": "intimated 29 Apr, on 2027-05-20",
+    "expected": "penalty_10",
+    "got": "penalty_10",
+    "ok": true,
+    "cite": "CL_2_25_F"
    },
    {
-    "truth": "same",
-    "score": 0.71,
-    "predicted_same": true,
-    "a": "Semester results of Electrical branch from May are still not declared.",
-    "b": "Results of the May semester exam for the electrical students have not been announced yet."
+    "rule": "Security deposit",
+    "case": "intimated 29 Apr, on 2027-06-15",
+    "expected": "penalty_20",
+    "got": "penalty_20",
+    "ok": true,
+    "cite": "CL_2_25_F"
    },
    {
-    "truth": "different",
-    "score": 0.0,
-    "predicted_same": false,
-    "a": "I cancelled my MBA seat on 3 July; the refund of Rs 1,10,000 has not come.",
-    "b": "Seniors beat my son in hostel block C on Saturday night."
+    "rule": "Security deposit",
+    "case": "intimated 29 Apr, on 2027-08-02",
+    "expected": "withdraw",
+    "got": "withdraw",
+    "ok": true,
+    "cite": "CL_2_25_F"
    },
    {
-    "truth": "different",
-    "score": 0.0,
-    "predicted_same": false,
-    "a": "The college has kept my 10th and 12th originals and asks Rs 50,000 to return them.",
-    "b": "No chemistry lab; practicals are just written in the record book."
+    "rule": "Appeal window",
+    "case": "Letter of Deficiency on 13 May 2027: appeal allowed until",
+    "expected": "2027-05-20",
+    "got": "2027-05-20",
+    "ok": true,
+    "cite": "CL_2_24_A"
    },
    {
-    "truth": "different",
-    "score": 0.047,
-    "predicted_same": false,
-    "a": "Salary of all teaching staff is pending from April.",
-    "b": "My post-matric scholarship came to the college account but they still demand fees from me."
+    "rule": "Structural stability",
+    "case": "issued 20 Jun 2022, valid five years: until",
+    "expected": "2027-06-20",
+    "got": "2027-06-20",
+    "ok": true,
+    "cite": "CL_6_17_H"
    },
    {
-    "truth": "different",
-    "score": 0.087,
-    "predicted_same": false,
-    "a": "Semester results of Electrical branch from May are still not declared.",
-    "b": "Rs 25,000 bus fee is compulsory even for students who live next to the college."
+    "rule": "EoA letter",
+    "case": "issued 10 Apr 2026, 'within Six Months': due",
+    "expected": "2026-10-10",
+    "got": "2026-10-10",
+    "ok": true,
+    "cite": "EOA_LETTER"
    },
    {
-    "truth": "different",
-    "score": 0.0,
-    "predicted_same": false,
-    "a": "The hostel warden threatens girls who complain about the food.",
-    "b": "Refund of caution deposit of Rs 10,000 not given after I finished the course."
+    "rule": "EoA letter",
+    "case": "issued 30 Jun 2024, 'within One year': due",
+    "expected": "2025-06-30",
+    "got": "2025-06-30",
+    "ok": true,
+    "cite": "EOA_LETTER"
    },
    {
-    "truth": "different",
-    "score": 0.104,
-    "predicted_same": false,
-    "a": "हॉस्टल में सीनियरों ने मारपीट की।",
-    "b": "कॉलेज मूल अंकतालिका वापस नहीं कर रहा।"
+    "rule": "Countdown",
+    "case": "EVC not yet fixed on 17 May: must finish by",
+    "expected": "2027-06-05",
+    "got": "2027-06-05",
+    "ok": true,
+    "cite": "CL_2_25_J"
    },
    {
-    "truth": "different",
-    "score": 0.254,
-    "predicted_same": false,
-    "a": "No library books for third year.",
-    "b": "Three teachers resigned because they were not paid."
+    "rule": "Countdown",
+    "case": "same: spare days at the usual pace",
+    "expected": "10",
+    "got": "10",
+    "ok": true,
+    "cite": "CL_2_25_J"
    },
    {
-    "truth": "different",
-    "score": 0.156,
-    "predicted_same": false,
-    "a": "Fee waiver denied though I am in the TFW list.",
-    "b": "Degree certificate not issued two years after passing."
+    "rule": "Countdown",
+    "case": "same: one more deficiency round (SHC, 14 days)",
+    "expected": "at_risk",
+    "got": "at_risk",
+    "ok": true,
+    "cite": "CL_2_23_3"
+   },
+   {
+    "rule": "Countdown",
+    "case": "EVC fixed for 8 Jun: classed",
+    "expected": "will_miss",
+    "got": "will_miss",
+    "ok": true,
+    "cite": "CL_2_25_J"
    }
   ]
  },
- "seconds": 8.0,
- "note": "All test inputs are synthetic and written for this test. Real complaints will be messier; these figures show behaviour, not field accuracy."
+ "replay": {
+  "applications": 3000,
+  "seasons": 6,
+  "missed": 168,
+  "missed_share": 5.6,
+  "deadline": "2027-06-10",
+  "methods": [
+   {
+    "name": "Time allowed per step",
+    "how": "warn when any step is past its time allowed (the usual pendency alert)",
+    "misses_warned": 107,
+    "share_warned": 64,
+    "share_warned_21": 56,
+    "share_saveable": 61,
+    "median_lead": 59,
+    "flagged": 825,
+    "precision": 13,
+    "false_alarms": 25
+   },
+   {
+    "name": "Countdown to the calendar date",
+    "how": "warn when the date is short at the usual pace",
+    "misses_warned": 167,
+    "share_warned": 99,
+    "share_warned_21": 73,
+    "share_saveable": 27,
+    "median_lead": 29,
+    "flagged": 176,
+    "precision": 95,
+    "false_alarms": 0
+   },
+   {
+    "name": "Countdown, early warning",
+    "how": "also warn when one more deficiency round would miss the date",
+    "misses_warned": 167,
+    "share_warned": 99,
+    "share_warned_21": 89,
+    "share_saveable": 62,
+    "median_lead": 42,
+    "flagged": 240,
+    "precision": 70,
+    "false_alarms": 3
+   }
+  ],
+  "actionable": 27,
+  "note": "Simulated cycles with random stage times (independent of the demo data). Both methods see the same applications on the same days."
+ },
+ "real": {
+  "institutions": 72,
+  "letters": 123,
+  "with_deficiencies": 23,
+  "share_with_deficiencies": 19,
+  "pairs": 6,
+  "noted_again": 3,
+  "examples": [
+   "B.M.S.College Of Engineering: Faculty Deficiency (2024-25 and 2025-26)",
+   "Jaypee Institute Of Information Technology: Application S/W; Earning credits through 'Skilling' based courses (2024-25 and 2025-26)",
+   "Pondicherry University: Implementation of PARAKH (2023-24 and 2024-25)"
+  ],
+  "windows": {
+   "1 year": 3,
+   "6 months": 19
+  },
+  "window_by_year": {
+   "2022-23": [
+    "6 months"
+   ],
+   "2023-24": [
+    "6 months"
+   ],
+   "2024-25": [
+    "1 year",
+    "6 months"
+   ],
+   "2025-26": [
+    "1 year",
+    "6 months"
+   ],
+   "2026-27": [
+    "6 months"
+   ]
+  },
+  "aph_clauses": 29
+ },
+ "demo": {
+  "applications": 196,
+  "messages": 1987,
+  "by_kind": {
+   "reminder": 558,
+   "overdue": 234,
+   "notice": 610,
+   "info": 36,
+   "expired": 10,
+   "escalated": 35,
+   "not submitted": 2,
+   "due_soon": 473,
+   "at_risk": 29
+  },
+  "per_application": 10.1,
+  "movements": 2079,
+  "movements_logged": 2079,
+  "audit_entries": 2080,
+  "chain_ok": true
+ }
 }

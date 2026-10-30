@@ -4,7 +4,13 @@ node_modules/
 frontend/dist/
 __pycache__/
 *.pyc
+.DS_Store
 
-# generated / downloaded data (recreate with scripts/seed.py; the model downloads on first run)
+# generated data (recreate with scripts/seed.py and scripts/evaluate.py)
 data/*
 !data/eval_report.json
+# real public data shipped with the repo (rebuild with scripts/build_real_data.py)
+!data/real/
+
+# screenshots for the idea deck
+deck-screenshots/

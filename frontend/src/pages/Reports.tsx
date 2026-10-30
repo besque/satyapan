@@ -1,87 +1,48 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api, withToken } from '../api'
-import { B, fmtDate, pct } from '../ui'
-
-const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-
-function presets() {
-  const t = new Date()
-  const q = Math.floor(t.getMonth() / 3)
-  return [
-    ['This month', iso(new Date(t.getFullYear(), t.getMonth(), 1)), iso(t)],
-    ['Last month', iso(new Date(t.getFullYear(), t.getMonth() - 1, 1)), iso(new Date(t.getFullYear(), t.getMonth(), 0))],
-    ['This quarter', iso(new Date(t.getFullYear(), q * 3, 1)), iso(t)],
-    ['Last 90 days', iso(new Date(t.getTime() - 89 * 86400000)), iso(t)],
-    ['Last 12 months', iso(new Date(t.getFullYear() - 1, t.getMonth(), t.getDate() + 1)), iso(t)],
-  ]
-}
+import { useClock } from '../App'
+import { AppLink, Counts, fmtDate, Loading, nameOf, Tip } from '../ui'
 
 export default function Reports() {
-  const ps = presets()
-  const [range, setRange] = useState<[string, string]>([ps[3][1], ps[3][2]])
   const [d, setD] = useState<any>(null)
-  useEffect(() => { setD(null); api(`/api/reports?frm=${range[0]}&to=${range[1]}`).then(setD) }, [range])
-  const csv = (t: string) => withToken(`/api/reports.csv?table=${t}&frm=${range[0]}&to=${range[1]}`)
-  const maxM = Math.max(1, ...(d?.monthly || []).flatMap((m: any) => [m.received, m.disposed]))
-  return (
-    <div>
-      <div className="titlebar">
-        <div><h1>Reports</h1><div className="sub">{fmtDate(range[0])} to {fmtDate(range[1])}</div></div>
-        <div className="row noprint">
-          <div className="seg">{ps.map(([l, a, b]) => <button key={l} className={range[0] === a && range[1] === b ? 'on' : ''} onClick={() => setRange([a, b])}>{l}</button>)}</div>
-          <input type="date" value={range[0]} onChange={(e) => setRange([e.target.value, range[1]])} />
-          <input type="date" value={range[1]} onChange={(e) => setRange([range[0], e.target.value])} />
-          <button className="btn" onClick={() => window.print()}>Print</button>
-        </div>
-      </div>
-      {!d ? <div className="empty"><span className="spinner" /></div> : <>
-        <div className="counts static">
-          <div><span className="v">{d.totals.received}</span><span className="l">Received</span></div>
-          <div><span className="v">{d.totals.disposed}</span><span className="l">Disposed</span></div>
-          <div><span className="v">{d.totals.disposal_rate}%</span><span className="l">Disposal rate (disposed ÷ received)</span></div>
-          <div><span className="v">{d.totals.open_at_end}</span><span className="l">Open at end of period</span></div>
-          <div><span className="v">{d.totals.overlaps}</span><span className="l">Overlaps found</span></div>
-        </div>
-        <div className="grid g2" style={{ marginBottom: 14 }}>
-          <div className="box"><div className="bh"><h2>Received and disposed, by month</h2><span className="legend"><span><i className="sw rec" />received</span><span><i className="sw dis" />disposed</span></span></div>
-            <div className="bb"><div className="cols">{d.monthly.map((m: any) => <div key={m.month} className="col">
-              <div className="pair"><i className="rec" style={{ height: `${(m.received / maxM) * 100}%` }} title={`${m.received} received`} /><i className="dis" style={{ height: `${(m.disposed / maxM) * 100}%` }} title={`${m.disposed} disposed`} /></div>
-              <span className="small">{m.month.split(' ')[0]}</span></div>)}</div></div></div>
-          <Simple title="Ageing of cases open at end of period" rows={d.ageing} csv={csv('ageing')} />
-        </div>
-        <Stat title="Bureau-wise" rows={d.bureau} csv={csv('bureau')} bureau />
-        <Stat title="Region-wise" rows={d.region} csv={csv('region')} />
-        <Stat title="By nature of complaint" rows={d.category} csv={csv('category')} />
-        <Stat title="Institution-wise (most cases)" rows={d.institution} csv={csv('institution')} />
-        <div className="box" style={{ marginBottom: 14 }}>
-          <div className="bh"><h2>Overlapping and duplicate cases</h2><a className="small noprint" href={csv('overlaps')}>Download CSV</a></div>
-          <div className="tablewrap"><table className="t small"><thead><tr><th>Kind</th><th className="num">Raised</th><th className="num">Closed by officers</th><th className="num">Still open</th></tr></thead>
-            <tbody>{d.overlaps.map((r: any) => <tr key={r.name}><td>{r.name}</td><td className="num">{r.raised}</td><td className="num">{r.resolved}</td><td className="num">{r.open}</td></tr>)}</tbody></table></div>
-        </div>
-      </>}
+  const { clock } = useClock()
+  useEffect(() => { api('/api/reports').then(setD) }, [])
+  if (!d) return <Loading />
+  const o = d.overview, c = o.counts
+  const csv = (t: string) => withToken(`/api/reports.csv?table=${t}`)
+  const Box = ({ title, table, children, tip }: any) => <div className="box"><div className="bh"><h2>{title}{tip && <Tip>{tip}</Tip>}</h2>{table && <a className="small noprint" href={csv(table)}>Download CSV</a>}</div>{children}</div>
+  return <div>
+    <div className="titlebar"><div><h1>Reports</h1><div className="sub">Approval cycle {clock?.ay} as on {fmtDate(clock?.today)}</div></div>
+      <div className="row noprint"><a className="btn" href={csv('applications')}>All applications (CSV)</a><button className="btn" onClick={() => window.print()}>Print</button></div></div>
+    <Counts items={[
+      { k: 'a', v: c.applications, l: 'Applications' }, { k: 'd', v: c.approved, l: 'Approved', color: 'green' }, { k: 'l', v: c.lod, l: 'Deficiency / rejected (final)' },
+      { k: 'p', v: c.in_process, l: 'In process' }, { k: 'r', v: c.will_miss + c.fast_track + c.at_risk, l: 'Not on track', color: 'red' },
+      { k: 's', v: `${Math.round((o.split.aicte / Math.max(1, o.split.aicte + o.split.institution)) * 100)}%`, l: 'of all waiting time was with AICTE' }]} />
+    <Box title="Stage-wise pendency" table="stages" tip="Applications waiting at each stage now, how long they have waited, and how many are past the time allowed or not on track for the calendar date.">
+      <div className="tablewrap"><table className="t small"><thead><tr><th>Stage</th><th className="num">Waiting</th><th className="num">Median days</th><th className="num">Longest</th><th className="num">Past time allowed</th><th className="num">Not on track</th><th className="num">Of which with institution</th></tr></thead>
+        <tbody>{o.stages.map((s: any) => <tr key={s.stage}><td>{s.label}</td><td className="num">{s.open}</td><td className="num">{s.median_days}</td><td className="num">{s.max_days}</td>
+          <td className="num" style={{ color: s.overdue ? 'var(--red)' : undefined }}>{s.overdue}</td><td className="num">{s.at_risk}</td><td className="num">{s.with_institution}</td></tr>)}</tbody></table></div></Box>
+    <Box title="Region-wise processing" table="regions" tip="Median days are counted per application, separately for time with AICTE (offices, committees, Executive Committee) and time with the institution.">
+      <div className="tablewrap"><table className="t small"><thead><tr><th>Region</th><th className="num">Applications</th><th className="num">Decided</th><th className="num">In process</th><th className="num">Not on track</th><th className="num">Late with AICTE</th><th className="num">EVCs to fix</th><th className="num">Median days with AICTE</th><th className="num">with institution</th></tr></thead>
+        <tbody>{o.regions.map((r: any) => <tr key={r.region}><td>{r.region} <span className="faint">({r.office})</span></td><td className="num">{r.applications}</td><td className="num">{r.decided}</td><td className="num">{r.in_process}</td>
+          <td className="num">{r.risk}</td><td className="num">{r.overdue}</td><td className="num">{r.evc_to_schedule}</td><td className="num">{r.days_aicte ?? '—'}</td><td className="num">{r.days_inst ?? '—'}</td></tr>)}</tbody></table></div></Box>
+    <div className="grid g2">
+      <Box title="EVC status" table="evc">
+        <div className="tablewrap"><table className="t small"><thead><tr><th>Region</th><th className="num">To fix</th><th className="num">Video awaited</th><th className="num">Fixed</th><th className="num">Held</th><th className="num">Deficient</th><th className="num">Median days</th></tr></thead>
+          <tbody>{d.evc.map((r: any) => <tr key={r.region}><td>{r.region}</td><td className="num">{r.to_schedule}</td><td className="num">{r.video_awaited}</td><td className="num">{r.scheduled}</td><td className="num">{r.held}</td><td className="num">{r.deficient}</td><td className="num">{r.median_days ?? '—'}</td></tr>)}</tbody></table></div></Box>
+      <Box title="Undertakings, certificates and deposits" table="compliance">
+        <div className="tablewrap"><table className="t small"><thead><tr><th>Kind</th><th className="num">Total</th><th className="num">Verified</th><th className="num">To verify</th><th className="num">Due soon</th><th className="num">Late</th><th className="num">Later</th></tr></thead>
+          <tbody>{d.compliance.map((r: any) => <tr key={r.kind}><td>{r.kind}</td><td className="num">{r.total}</td><td className="num">{r.verified}</td><td className="num">{r.to_verify}</td><td className="num">{r.due_soon}</td>
+            <td className="num" style={{ color: r.overdue ? 'var(--red)' : undefined }}>{r.overdue}</td><td className="num">{r.upcoming}</td></tr>)}</tbody></table></div>
+        <div className="bb small muted">Earlier cycles: {d.real.with_deficiencies} undertakings read from {d.real.letters} published approval letters (<Link to="/compliance?src=public">see them</Link>).</div></Box>
     </div>
-  )
-}
-
-function Stat({ title, rows, csv, bureau }: { title: string; rows: any[]; csv: string; bureau?: boolean }) {
-  return (
-    <div className="box" style={{ marginBottom: 14 }}>
-      <div className="bh"><h2>{title}</h2><a className="small noprint" href={csv}>Download CSV</a></div>
-      <div className="tablewrap"><table className="t small">
-        <thead><tr><th>{bureau ? 'Bureau / Cell' : 'Name'}</th><th className="num">Received</th><th className="num">Disposed</th><th className="num">Disposed in time</th>
-          <th className="num">Avg. days to dispose</th><th className="num">Open at end</th><th className="num">Of which beyond timeline</th></tr></thead>
-        <tbody>{rows.map((r) => <tr key={r.name}><td>{bureau ? <B b={r.name} /> : r.name}</td><td className="num">{r.received}</td><td className="num">{r.disposed}</td>
-          <td className="num">{pct(r.in_time_pct)}</td><td className="num">{r.avg_days ?? '—'}</td><td className="num">{r.open}</td>
-          <td className="num" style={{ color: r.overdue ? 'var(--red)' : undefined }}>{r.overdue}</td></tr>)}</tbody>
-      </table></div>
-    </div>
-  )
-}
-
-function Simple({ title, rows, csv }: { title: string; rows: any[]; csv: string }) {
-  const max = Math.max(1, ...rows.map((r) => r.n))
-  return (
-    <div className="box"><div className="bh"><h2>{title}</h2><a className="small noprint" href={csv}>Download CSV</a></div>
-      <div className="bb">{rows.map((r) => <div key={r.name} className="hbar"><span className="k">{r.name}</span><span className="track"><i style={{ width: `${(r.n / max) * 100}%` }} /></span><span className="n">{r.n}</span></div>)}</div></div>
-  )
+    <Box title="Overdue cases" table="overdue">
+      <div className="tablewrap"><table className="t small"><thead><tr><th>Application</th><th>Waiting on</th><th>With</th><th>Due</th><th className="num">Days over</th><th>Against the calendar</th></tr></thead>
+        <tbody>{d.overdue.map((r: any) => <tr key={r.id}><td><AppLink id={r.id} /> {nameOf(r.institution)}<div className="faint">{r.region}</div></td><td>{r.task}</td><td>{r.holder_label}</td><td>{fmtDate(r.due_on)}</td>
+          <td className="num">{r.overdue}</td><td>{r.risk_label}</td></tr>)}</tbody></table></div></Box>
+    <Box title="Escalations this cycle">
+      <div className="tablewrap"><table className="t small"><thead><tr><th>Level</th><th>To</th><th className="num">Count</th></tr></thead>
+        <tbody>{d.escalations.map((r: any, i: number) => <tr key={i}><td>{r.level === 3 ? 'Senior management' : 'Head of office'}</td><td>{r.to}</td><td className="num">{r.count}</td></tr>)}</tbody></table></div></Box>
+  </div>
 }

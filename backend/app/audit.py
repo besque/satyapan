@@ -7,10 +7,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
 from typing import Any
 
-from . import db
+from . import clock, db
 
 GENESIS = "0" * 64
 
@@ -21,7 +20,7 @@ def _digest(seq: int, ts: str, actor: str, role: str, action: str, target: str, 
 
 
 def log(actor: str, role: str, action: str, target: str, payload: Any = None, ts: str | None = None) -> dict:
-    ts = ts or datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    ts = ts or clock.stamp()
     body = json.dumps(payload or {}, sort_keys=True, ensure_ascii=False, default=str)
     with db.tx() as c:
         last = c.execute("SELECT seq, hash FROM audit ORDER BY seq DESC LIMIT 1").fetchone()

@@ -1,4 +1,4 @@
-"""HTTP API (FastAPI). Role-based access is enforced server-side on every route.
+"""HTTP API (FastAPI). Role-based access is enforced on every route; every action goes to the activity log.
 
 Run:  uvicorn app.api:app --port 8000   (from backend/)
 """
@@ -11,33 +11,58 @@ import io
 import json
 import threading
 import time
-from collections import Counter, defaultdict
-from datetime import date, timedelta
+from datetime import timedelta
+from typing import Any
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, audit, db, overlap, resolve, service, settings
-from .config import DATA, ROOT
-from .workflow import ACTIONS, OFFICER_ACTIONS, STATUS, d, timeline, today
+from . import alerts, aph, audit, clock, compliance, db, demo, engine, letters, settings, views
+from .clock import d, iso
+from .config import BRAND, DATA, ROOT, UPLOADS
+from .engine import COMMITTEES, WorkflowError
 
-app = FastAPI(title="Samanvay - institution complaint monitoring")
-SECRET = b"samanvay-demo-secret"
+app = FastAPI(title=f"{BRAND['name']}: {BRAND['tagline']}")
+SECRET = b"approval-demo-secret"
 
 USERS = {
-    "pgrc": {"name": "K. Verma", "role": "officer", "bureau": "PGRC", "officer_id": "PGRC-1", "title": "Section Officer, Public Grievance Redressal Cell"},
-    "rb": {"name": "S. Rao", "role": "officer", "bureau": "RB", "officer_id": "RB-1", "title": "Deputy Director, Regulation Bureau"},
-    "ab": {"name": "M. Das", "role": "officer", "bureau": "AB", "officer_id": "AB-1", "title": "Assistant Director, Approval Bureau"},
-    "arc": {"name": "N. Gupta", "role": "officer", "bureau": "ARC", "officer_id": "ARC-1", "title": "Officer, Anti-Ragging Cell"},
-    "ro": {"name": "P. Nair", "role": "officer", "bureau": "RO", "officer_id": "RO-SW", "region": "South-Western", "title": "Regional Officer, South-Western Region"},
-    "head": {"name": "Dr. A. Kulkarni", "role": "management", "bureau": None, "title": "Adviser (Monitoring), senior management"},
-    "admin": {"name": "S. Iyer", "role": "admin", "bureau": None, "title": "System administrator"},
+    "rb": {"name": "S. Rao", "role": "rb", "offices": ["RB"], "title": "Deputy Director, Regulation Bureau (Approval)"},
+    "ro": {"name": "P. Nair", "role": "ro", "region": "Central", "offices": ["RO:Central"], "title": "Regional Officer, Central Region (Bhopal)"},
+    "expert": {"name": "Prof. R. Iyer", "role": "committee", "offices": [f"COMMITTEE:{s}" for s in COMMITTEES],
+               "title": "Expert member, Scrutiny / EVC / hearing committees"},
+    "ec": {"name": "Dr. V. Menon", "role": "ec", "offices": ["EC"], "title": "Member Secretary, for the Executive Committee"},
+    "head": {"name": "Dr. A. Kulkarni", "role": "head", "offices": ["HEAD"], "title": "Adviser (Approval), senior management"},
+    "admin": {"name": "S. Iyer", "role": "admin", "offices": [], "title": "System administrator"},
 }
+QUICK_INST = {"inst": "Kesarveni Institute of Technology", "inst2": "Neelkamal Tarai Institute of Technology"}
+# User IDs typed on the sign-in page. Institutions sign in with their Permanent ID.
+LOGIN_IDS = {"akulkarni": "head", "srao": "rb", "pnair": "ro", "riyer": "expert", "vmenon": "ec", "siyer": "admin"}
+STAFF = ("rb", "ro", "committee", "ec", "head", "admin")
 
 
 # ------------------------------------------------------------------------------------ auth
+
+def resolve(uid: str) -> dict:
+    uid = LOGIN_IDS.get(uid.strip().lower(), uid.strip())
+    if db.q1("SELECT 1 FROM institutions WHERE pid=? AND source='test'", (uid,)):
+        uid = f"inst:{uid}"
+    if uid in USERS:
+        return {"id": uid, **USERS[uid]}
+    if uid in QUICK_INST:
+        uid = f"inst:{demo.pid_for(QUICK_INST[uid])}"
+    if uid.startswith("inst:"):
+        inst = db.q1("SELECT * FROM institutions WHERE pid=? AND source='test'", (uid[5:],))
+        if inst:
+            return {"id": uid, "name": inst["name"], "role": "institution", "pid": inst["pid"], "offices": [f"INST:{inst['pid']}"],
+                    "title": f"Institution login, Permanent ID {inst['pid']}"}
+    if uid.startswith("ro:") and uid[3:] in settings.get()["regions"]:
+        reg = uid[3:]
+        return {"id": uid, "name": f"Regional Officer, {reg}", "role": "ro", "region": reg, "offices": [f"RO:{reg}"],
+                "title": f"Regional Officer, {reg} Region ({settings.get()['regions'][reg]})"}
+    raise HTTPException(404, "unknown user")
+
 
 def _sign(payload: str) -> str:
     return payload + "." + hmac.new(SECRET, payload.encode(), hashlib.sha256).hexdigest()[:24]
@@ -48,31 +73,32 @@ def user(x_token: str | None = Header(default=None), t: str | None = Query(defau
     if not tok or "." not in tok:
         raise HTTPException(401, "login required")
     payload = tok.rsplit(".", 1)[0]
-    if _sign(payload) != tok or payload not in USERS:
+    if _sign(payload) != tok:
         raise HTTPException(401, "bad token")
-    return {"id": payload, **USERS[payload]}
+    return resolve(payload)
 
 
 def need(*roles):
     def dep(u=Depends(user)):
         if u["role"] not in roles:
-            raise HTTPException(403, f"role '{u['role']}' may not do this")
+            raise HTTPException(403, "Your role cannot do this")
         return u
     return dep
 
 
-class Login(BaseModel):
+class LoginIn(BaseModel):
     user: str
+    password: str | None = None   # not checked yet: authentication is to be connected to AICTE's own sign-in
 
 
 @app.post("/api/login")
-def login(body: Login):
-    if body.user not in USERS:
-        raise HTTPException(404, "unknown user")
-    tok = _sign(body.user)
-    u = {"id": body.user, **USERS[body.user]}
-    audit.log(body.user, u["role"], "auth.login", body.user)
-    return {"token": tok, "user": u}
+def login(body: LoginIn):
+    try:
+        u = resolve(body.user)
+    except HTTPException:
+        raise HTTPException(401, "User ID not recognised")
+    audit.log(u["id"], u["role"], "auth.login", u["id"])
+    return {"token": _sign(u["id"]), "user": u}
 
 
 @app.get("/api/me")
@@ -80,800 +106,600 @@ def me(u=Depends(user)):
     return u
 
 
+@app.get("/api/brand")
+def brand():
+    return BRAND
+
+
 @app.get("/api/demo-users")
 def demo_users():
-    return [{"id": k, **v} for k, v in USERS.items()]
-
-
-# ------------------------------------------------------------------------------------ helpers
-
-_inst_cache: dict | None = None
-_officer_cache: dict | None = None
-
-
-def insts() -> dict:
-    global _inst_cache
-    if _inst_cache is None:
-        _inst_cache = {r["permanent_id"]: r for r in db.q("SELECT * FROM institutions")}
-    return _inst_cache
-
-
-def officers() -> dict:
-    global _officer_cache
-    if _officer_cache is None:
-        _officer_cache = {r["id"]: r for r in db.q("SELECT * FROM officers")}
-    return _officer_cache
-
-
-def open_alerts() -> list[dict]:
-    return db.q("SELECT * FROM coordination WHERE status IN ('open','acknowledged')")
-
-
-class AlertMap(defaultdict):
-    """case id -> open alerts it is part of; also remembers, per bureau, the alerts that involve that bureau."""
-
-    def __init__(self):
-        super().__init__(list)
-        self.mine: dict[str | None, set[str]] = {}
-
-
-def alerts_by_case() -> AlertMap:
-    out = AlertMap()
-    for a in open_alerts():
-        for c in db.unj(a["cases"], []):
-            out[c].append({"id": a["id"], "kind": a["kind"]})
+    by_id = {v: k for k, v in LOGIN_IDS.items()}
+    out = [{"id": k, "login": by_id.get(k, k), **v} for k, v in USERS.items()]
+    for k in QUICK_INST:
+        try:
+            u = resolve(k)
+            out.append({**u, "id": k, "login": u["pid"]})
+        except HTTPException:
+            pass
     return out
 
 
-def can_see(u: dict, c: dict, alert_map: dict | None = None) -> bool:
-    """Full complaint text: the handling bureau, senior management, the regional office of the institution's
-    region, and bureaus that share an open overlap alert with the case. Others see the summary only."""
-    if u["role"] in ("management", "admin") or c["bureau"] == u.get("bureau"):
+def can_see(u: dict, a: dict) -> bool:
+    r = u["role"]
+    if r in ("rb", "ec", "head", "admin"):
         return True
-    inst = insts().get(c["permanent_id"] or "")
-    if u.get("bureau") == "RO" and inst and inst["region"] == u.get("region"):
-        return True
-    amap = alert_map if alert_map is not None else alerts_by_case()
-    if c["id"] not in amap:
-        return False
-    return any(a["id"] in _my_alert_ids(u, amap) for a in amap.get(c["id"], []))
+    if r == "ro":
+        return a["region"] == u["region"]
+    if r == "committee":
+        return bool(db.q1(f"SELECT 1 FROM steps WHERE app_id=? AND stage IN ({','.join('?' * len(COMMITTEES))})", (a["id"], *COMMITTEES)))
+    return r == "institution" and a["pid"] == u["pid"]
 
 
-def _my_alert_ids(u: dict, amap: AlertMap) -> set[str]:
-    """Open alerts that include at least one case of the user's bureau (computed once per request)."""
-    b = u.get("bureau")
-    if b not in amap.mine:
-        bureau_of = {r["id"]: r["bureau"] for r in db.q("SELECT id, bureau FROM cases")}
-        amap.mine[b] = {a["id"] for cid, al in list(amap.items()) for a in al if bureau_of.get(cid) == b}
-    return amap.mine[b]
+def _app(app_id: str, u: dict) -> dict:
+    try:
+        a = engine.app(app_id)
+    except WorkflowError:
+        raise HTTPException(404, "No such application")
+    if not can_see(u, a):
+        raise HTTPException(403, "This application is not in your scope")
+    return a
 
 
-def mask(name: str | None) -> str:
-    if not name:
-        return ""
-    return " ".join(w[0] + "." for w in name.split() if w[:1].isalpha()) or "—"
+def _scope(u: dict) -> tuple[str, tuple]:
+    if u["role"] == "ro":
+        return "a.region=?", (u["region"],)
+    if u["role"] == "institution":
+        return "a.pid=?", (u["pid"],)
+    if u["role"] == "committee":
+        return "a.id IN (SELECT app_id FROM steps WHERE stage IN ('scrutiny','re_scrutiny','evc','shc','sac'))", ()
+    return "1=1", ()
 
 
-def row(c: dict, u: dict, amap: dict) -> dict:
-    inst = insts().get(c["permanent_id"] or "") or {}
-    tl = timeline(c)
-    vis = can_see(u, c, amap)
-    off = officers().get(c["officer_id"] or "") or {}
-    return {
-        "id": c["id"], "bureau": c["bureau"], "received_on": c["received_on"], "source": c["source"], "ext_ref": c["ext_ref"],
-        "permanent_id": c["permanent_id"], "institution": inst.get("name"), "city": inst.get("city"), "region": inst.get("region"),
-        "inst_text": c["inst_text"], "match_state": c["match_state"],
-        "category": c["category"], "category_label": settings.category(c["category"])["label"],
-        "subject": c["subject"] if vis else None, "status": c["status"], "status_label": STATUS[c["status"]],
-        "officer": off.get("name"), "officer_id": c["officer_id"], "last_action": c["last_action"], "last_action_on": c["last_action_on"],
-        "next_action": c["next_action"], "next_due": c["next_due"], "due_on": c["due_on"], "disposed_on": c["disposed_on"],
-        "outcome": c["outcome"], "timeline": tl, "esc_level": c["esc_level"], "lang": c["lang"],
-        "alerts": amap.get(c["id"], []), "visible": vis,
-    }
+# ------------------------------------------------------------------------------------ clock
+
+def clock_info() -> dict:
+    t = clock.today()
+    c = settings.get()["cycle"]
+    return {"today": iso(t), "demo": clock.is_demo(), "ay": c["ay"], "last_date_approval": c["last_date_approval"],
+            "last_date_after_appeal": c["last_date_after_appeal"], "days_left": (d(c["last_date_approval"]) - t).days}
 
 
-def _case(cid: str) -> dict:
-    c = db.q1("SELECT * FROM cases WHERE id=?", (cid,))
-    if not c:
-        raise HTTPException(404, "case not found")
-    return c
+@app.get("/api/clock")
+def get_clock():
+    return clock_info()
 
 
-def _may_act(u: dict, c: dict) -> None:
-    if u["role"] == "management":
-        return
-    if u["role"] != "officer" or c["bureau"] != u["bureau"]:
-        raise HTTPException(403, f"Only {c['bureau']} officers can act on this case")
+class ClockIn(BaseModel):
+    days: int
 
 
-def _refresh_caches():
-    global _inst_cache, _officer_cache
-    _inst_cache = _officer_cache = None
-    resolve.reload()
+_clock_lock = threading.Lock()
 
 
-# ------------------------------------------------------------------------------------ overview
+@app.post("/api/clock")
+def move_clock(body: ClockIn, u=Depends(need("admin"))):
+    if not clock.is_demo():
+        raise HTTPException(400, "The system date follows the real date")
+    if not 1 <= body.days <= 120:
+        raise HTTPException(400, "Move forward by 1 to 120 days")
+    with _clock_lock:
+        start = clock.today() + timedelta(days=1)
+        end = clock.today() + timedelta(days=body.days)
+        r = alerts.run_until(start, end)
+        settings.put("cycle.today", iso(end), u["id"], f"Demo clock moved forward {body.days} days")
+        audit.log(u["id"], u["role"], "clock.moved", "clock", {"to": iso(end), "messages": r["sent"]})
+    return {**clock_info(), "sent": r["sent"]}
+
+
+@app.post("/api/admin/reset")
+def reset_demo(u=Depends(need("admin"))):
+    with _clock_lock:
+        out = demo.build(verbose=False)
+    return {"ok": True, "applications": out["applications"]}
+
+
+# ------------------------------------------------------------------------------------ work, dashboards
+
+@app.get("/api/meta")
+def meta(u=Depends(user)):
+    s = settings.get()
+    return {"regions": list(s["regions"]), "natures": [{"id": k, "label": v["label"]} for k, v in s["natures"].items()],
+            "stages": [{"id": k, "label": v["label"], "short": v["short"]} for k, v in s["stages"].items()], "risk": engine.RISK}
+
+
+@app.get("/api/work")
+def work(u=Depends(user)):
+    on = clock.today()
+    if u["role"] == "institution":
+        return mine(u)
+    offices = set(u["offices"])
+    rows = views.app_rows(on, "WHERE s.id IS NOT NULL AND s.closed_on IS NULL")
+    if u["role"] == "head":
+        steps = [r for r in rows if r["esc_level"] >= 3 or r["risk"] in ("will_miss", "fast_track")]
+    else:
+        steps = [r for r in rows if r["holder"] in offices]
+    tell = settings.get()["alerts"]["institution"]["tell_officer_after"]
+    watch = []
+    if u["role"] == "rb":   # waiting on institutions, and committees the Bureau convenes that are late or at risk
+        watch = [r for r in rows if (r["holder_kind"] == "institution" and r["overdue"] >= tell)
+                 or (r["holder"].startswith("COMMITTEE:") and r["stage"] != "evc" and (r["overdue"] > 0 or r["risk"] != "on_track"))]
+    if u["role"] == "ro":   # EVCs of the region that someone else holds right now
+        watch = [r for r in rows if r["region"] == u["region"] and r["stage"] == "evc" and r["holder"] not in offices]
+    watch.sort(key=views.urgency)
+    items = []
+    if offices:
+        items = views.item_rows(on, f"WHERE source='test' AND holder IN ({','.join('?' * len(offices))})", tuple(offices))
+    steps.sort(key=views.urgency)
+    week = on + timedelta(days=7)
+    counts = {"total": len(steps) + len(items), "will_miss": sum(r["risk"] == "will_miss" for r in steps),
+              "fast_track": sum(r["risk"] == "fast_track" for r in steps), "at_risk": sum(r["risk"] == "at_risk" for r in steps),
+              "overdue": sum(r["overdue"] > 0 for r in steps) + sum(i["state"]["color"] == "red" for i in items),
+              "this_week": sum(bool(r["due_on"]) and d(r["due_on"]) <= week for r in steps)}
+    return {"steps": steps, "items": items, "watch": watch, "counts": counts}
+
+
+def mine(u: dict) -> dict:
+    on = clock.today()
+    pid = u["pid"]
+    inst = db.q1("SELECT * FROM institutions WHERE pid=?", (pid,))
+    rows = views.app_rows(on, "WHERE a.pid=?", (pid,))
+    items = views.item_rows(on, "WHERE pid=? AND source='test'", (pid,))
+    return {"institution": views.institution_card(inst), "owe_steps": [r for r in rows if r["holder"] == f"INST:{pid}"],
+            "owe_items": [i for i in items if i["status"] in ("open", "rejected")], "applications": rows, "items": items,
+            "documents": views.documents(pid, on),
+            "notices": db.q("SELECT * FROM alerts WHERE to_office=? ORDER BY on_date DESC, id DESC LIMIT 25", (f"INST:{pid}",))}
+
 
 @app.get("/api/overview")
-def overview(scope: str = "mine", u=Depends(user)):
-    amap = alerts_by_case()
-    cases = db.q("SELECT * FROM cases")
-    if scope == "mine" and u.get("bureau"):
-        cases = [c for c in cases if c["bureau"] == u["bureau"]]
-    open_ = [c for c in cases if c["status"] != "disposed"]
-    tls = {c["id"]: timeline(c) for c in open_}
-    t30 = (today() - timedelta(days=30)).isoformat()
-    disposed = [c for c in cases if c["status"] == "disposed"]
-    counts = {
-        "total": len(cases), "pending": sum(c["status"] == "pending" for c in cases),
-        "under_process": sum(c["status"] == "under_process" for c in cases), "transferred": sum(c["status"] == "transferred" for c in cases),
-        "escalated": sum((c["esc_level"] or -1) >= 2 for c in open_), "overdue": sum(tls[c["id"]].get("state") == "overdue" for c in open_),
-        "due_soon": sum(tls[c["id"]].get("state") == "due_soon" for c in open_), "disposed": len(disposed),
-        "received_30d": sum(c["received_on"] >= t30 for c in cases), "disposed_30d": sum((c["disposed_on"] or "") >= t30 for c in disposed),
-        "unconfirmed": sum(c["match_state"] in ("confirm", "unmatched") for c in cases),
-    }
-    in_time = [c for c in disposed if timeline(c)["state"] == "in_time"]
-    counts["in_time_rate"] = round(100 * len(in_time) / len(disposed)) if disposed else None
-    buckets = [("0-7 days", 0, 7), ("8-14", 8, 14), ("15-21", 15, 21), ("22-30", 22, 30), ("31-60", 31, 60), ("Over 60", 61, 10**6)]
-    ageing = [{"label": b, "n": sum(lo <= tls[c["id"]]["age"] <= hi for c in open_)} for b, lo, hi in buckets]
-    bureaus = []
-    for b, info in settings.get()["bureaus"].items():
-        bc = [c for c in db.q("SELECT * FROM cases WHERE bureau=?", (b,))]
-        bo = [c for c in bc if c["status"] != "disposed"]
-        btl = [timeline(c) for c in bo]
-        bureaus.append({"bureau": b, "name": info["name"], "open": len(bo), "overdue": sum(t.get("state") == "overdue" for t in btl),
-                        "escalated": sum((c["esc_level"] or -1) >= 2 for c in bo),
-                        "avg_age": round(sum(t["age"] for t in btl) / len(btl)) if btl else 0,
-                        "disposed_30d": sum((c["disposed_on"] or "") >= t30 for c in bc),
-                        "officers": len({c["officer_id"] for c in bo})})
-    regions = Counter()
-    reg_over = Counter()
-    for c in open_:
-        r = (insts().get(c["permanent_id"] or "") or {}).get("region") or "Not identified"
-        regions[r] += 1
-        reg_over[r] += tls[c["id"]].get("state") == "overdue"
-    alerts = []
-    my_bureau = u.get("bureau")
-    ordered = sorted(open_alerts(), key=lambda a: a["created_at"], reverse=True)
-    for a in sorted(ordered, key=lambda a: overlap.KIND[a["kind"]]["rank"]):
-        cs = db.unj(a["cases"], [])
-        bs = sorted({(db.q1("SELECT bureau FROM cases WHERE id=?", (x,)) or {}).get("bureau") for x in cs})
-        if scope == "mine" and my_bureau and my_bureau not in bs:
-            continue
-        alerts.append(_alert_row(a, bs, u))
-    attention = []
-    if u.get("bureau"):
-        mine = [c for c in open_ if c["bureau"] == u["bureau"]]
-        strong = lambda c: any(a["kind"] != "parallel" for a in amap.get(c["id"], []))
-        mine.sort(key=lambda c: (not strong(c), tls[c["id"]]["days_left"]))
-        attention = [row(c, u, amap) for c in mine[:8]]
-    return {"counts": counts, "ageing": ageing, "bureaus": bureaus, "alerts": alerts,
-            "regions": [{"region": r, "open": n, "overdue": reg_over[r]} for r, n in sorted(regions.items())],
-            "attention": attention, "model": ai.backend(), "today": today().isoformat()}
+def overview(u=Depends(need(*STAFF))):
+    return views.overview(clock.today(), u["region"] if u["role"] == "ro" else None)
 
 
-def _alert_row(a: dict, bureaus: list[str], u: dict) -> dict:
-    inst = insts().get(a["permanent_id"]) or {}
-    acks = db.unj(a["acks"], {})
-    return {"id": a["id"], "kind": a["kind"], "kind_label": overlap.KIND[a["kind"]]["label"], "color": overlap.KIND[a["kind"]]["color"],
-            "title": a["title"], "institution": inst.get("name"), "permanent_id": a["permanent_id"], "region": inst.get("region"),
-            "cases": db.unj(a["cases"], []), "bureaus": bureaus, "lead": a["lead"], "status": a["status"], "acks": acks,
-            "my_ack": (u.get("bureau") in acks) if u.get("bureau") else None, "created_at": a["created_at"], "updated_at": a["updated_at"]}
+# ------------------------------------------------------------------------------------ applications
 
-
-# ------------------------------------------------------------------------------------ cases
-
-@app.get("/api/cases")
-def cases(q: str = "", bureau: str = "", region: str = "", category: str = "", status: str = "", state: str = "",
-          frm: str = "", to: str = "", pid: str = "", mine: int = 0, limit: int = 500, u=Depends(user)):
-    amap = alerts_by_case()
-    rows = db.q("SELECT * FROM cases ORDER BY received_on DESC")
-    out = []
+@app.get("/api/applications")
+def applications(q: str = "", region: str = "", nature: str = "", stage: str = "", risk: str = "", status: str = "",
+                 holder: str = "", u=Depends(user)):
+    where, args = _scope(u)
+    rows = views.app_rows(clock.today(), f"WHERE {where}", args)
     ql = q.strip().lower()
-    for c in rows:
-        if bureau and c["bureau"] != bureau or category and c["category"] != category or pid and c["permanent_id"] != pid:
-            continue
-        if status == "open" and c["status"] == "disposed" or status and status != "open" and c["status"] != status:
-            continue
-        if mine and c["officer_id"] != u.get("officer_id"):
-            continue
-        if frm and c["received_on"] < frm or to and c["received_on"] > to:
-            continue
-        r = row(c, u, amap)
-        if region and r["region"] != region:
-            continue
-        if state == "overdue" and r["timeline"].get("state") != "overdue" or state == "due_soon" and r["timeline"].get("state") != "due_soon":
-            continue
-        if state == "escalated" and not (c["status"] != "disposed" and (c["esc_level"] or -1) >= 2):
-            continue
-        if state == "overlap" and not r["alerts"] or state == "unconfirmed" and c["match_state"] not in ("confirm", "unmatched"):
-            continue
-        if ql:
-            hay = " ".join(str(x or "") for x in (c["id"], c["ext_ref"], r["institution"], c["permanent_id"], c["inst_text"],
-                                                  r["subject"], r["category_label"], r["city"])).lower()
-            if ql not in hay:
-                continue
-        out.append(r)
-    return {"rows": out[:limit], "total": len(out)}
-
-
-@app.get("/api/cases/{cid:path}/detail")
-def case_detail(cid: str, u=Depends(user)):
-    c = _case(cid)
-    amap = alerts_by_case()
-    r = row(c, u, amap)
-    vis = r["visible"]
-    inst = insts().get(c["permanent_id"] or "")
-    hist = db.q("SELECT * FROM actions WHERE case_id=? ORDER BY ts, id", (cid,))
-    for h in hist:
-        h["label"] = ACTIONS.get(h["kind"], {}).get("label", h["kind"])
-        h["extra"] = db.unj(h["extra"], {})
-    related = []
-    if c["permanent_id"]:
-        others = db.q("SELECT * FROM cases WHERE permanent_id=? AND id!=?", (c["permanent_id"], cid))
-        if others:
-            vecs = ai.case_vectors([c, *others])
-            for o in others:
-                pm = overlap.same_matter(c, o, vecs[cid], vecs[o["id"]])
-                orow = row(o, u, amap)
-                related.append({**orow, "same": pm["same"], "score": pm["score"], "reasons": pm["reasons"]})
-            related.sort(key=lambda x: (x["status"] == "disposed", -x["score"]))
-    al = []
-    for a in open_alerts():
-        if cid in db.unj(a["cases"], []):
-            bs = sorted({db.q1("SELECT bureau FROM cases WHERE id=?", (x,))["bureau"] for x in db.unj(a["cases"], [])})
-            al.append({**_alert_row(a, bs, u), "why": a["why"], "reasons": db.unj(a["reasons"], [])})
-    audit.log(u["id"], u["role"], "case.viewed", cid, {"full_text": vis})
-    match = db.unj(c["match"], {})
-    return {
-        **r, "description": c["description"] if vis else None,
-        "complainant": c["complainant"] if vis and (u["role"] == "management" or c["bureau"] == u.get("bureau")) else mask(c["complainant"]),
-        "complainant_type": c["complainant_type"], "institution_detail": inst, "match": match,
-        "category_ai": db.unj(c["category_ai"], []), "history": hist, "related": related, "coordination": al,
-        "spans": resolve.spans(c["description"], c["permanent_id"]) if vis else [],
-        "inst_spans": resolve.spans(c["inst_text"], c["permanent_id"]),
-        "can_act": u["role"] == "management" or (u["role"] == "officer" and c["bureau"] == u.get("bureau")),
-        "actions": [{"kind": k, "label": ACTIONS[k]["label"]} for k in OFFICER_ACTIONS],
-        "bureaus": [{"id": k, "name": v["name"]} for k, v in settings.get()["bureaus"].items()],
-        "categories": [{"id": k, "label": v["label"], "bureau": v["bureau"]} for k, v in settings.get()["categories"].items()],
-        "suggested_bureau": settings.category(c["category"])["bureau"],
-    }
-
-
-class ActionIn(BaseModel):
-    kind: str
-    remarks: str = ""
-    acknowledged: bool = False
-    reason: str = ""
-    to_bureau: str | None = None
-
-
-@app.post("/api/cases/{cid:path}/precheck")
-def case_precheck(cid: str, body: ActionIn, u=Depends(user)):
-    return {"warnings": overlap.precheck(_case(cid), body.kind)}
-
-
-@app.post("/api/cases/{cid:path}/action")
-def case_action(cid: str, body: ActionIn, u=Depends(user)):
-    c = _case(cid)
-    _may_act(u, c)
-    if body.kind == "transferred" and (not body.to_bureau or body.to_bureau == c["bureau"]):
-        raise HTTPException(400, "choose the bureau to transfer to")
-    if body.kind not in OFFICER_ACTIONS + ["transferred"]:
-        raise HTTPException(400, "unknown action")
-    if body.acknowledged and not body.reason.strip() and overlap.precheck(c, body.kind):
-        raise HTTPException(400, "give a reason for going ahead")
-    try:
-        service.add_action(cid, body.kind, body.remarks, u["name"], u["role"], acknowledged=body.acknowledged,
-                           reason=body.reason, to_bureau=body.to_bureau)
-    except service.Blocked as e:
-        return JSONResponse({"detail": "coordination check", "warnings": e.warnings}, status_code=409)
-    return {"ok": True}
-
-
-class CategoryIn(BaseModel):
-    category: str
-
-
-@app.post("/api/cases/{cid:path}/category")
-def case_category(cid: str, body: CategoryIn, u=Depends(user)):
-    c = _case(cid)
-    _may_act(u, c)
-    if body.category not in settings.get()["categories"]:
-        raise HTTPException(400, "unknown category")
-    db.update("cases", "id", cid, {"category": body.category, "due_on": service.due_for(body.category, c["received_on"])})
-    audit.log(u["id"], u["role"], "case.category", cid, {"from": c["category"], "to": body.category})
-    if c["permanent_id"]:
-        overlap.refresh(c["permanent_id"], actor=u["name"])
-    return {"ok": True}
-
-
-class InstIn(BaseModel):
-    permanent_id: str | None = None
-
-
-@app.post("/api/cases/{cid:path}/institution")
-def case_institution(cid: str, body: InstIn, u=Depends(user)):
-    c = _case(cid)
-    _may_act(u, c)
-    if body.permanent_id and body.permanent_id not in insts():
-        raise HTTPException(404, "institution not found")
-    service.confirm_institution(cid, body.permanent_id, u["name"], u["role"])
-    return {"ok": True}
-
-
-class LinkIn(BaseModel):
-    a: str
-    b: str
-    kind: str
-    reason: str = ""
-
-
-@app.post("/api/links")
-def link(body: LinkIn, u=Depends(need("officer", "management"))):
-    a, b = _case(body.a), _case(body.b)
-    if u["role"] == "officer" and u["bureau"] not in (a["bureau"], b["bureau"]):
-        raise HTTPException(403, "you can link cases of your own bureau only")
-    if body.kind not in ("same", "not_same"):
-        raise HTTPException(400, "kind must be same or not_same")
-    service.set_link(body.a, body.b, body.kind, u["name"], u["role"], body.reason)
-    return {"ok": True}
-
-
-class NewCase(BaseModel):
-    bureau: str | None = None
-    source: str = "Letter"
-    ext_ref: str | None = None
-    received_on: str | None = None
-    complainant: str = ""
-    complainant_type: str = "Student"
-    contact: str = ""
-    inst_text: str = ""
-    subject: str = ""
-    description: str = ""
-    category: str | None = None
-    permanent_id: str | None = None
-
-
-class AnalyseIn(BaseModel):
-    complainant: str = ""
-    inst_text: str = ""
-    subject: str = ""
-    description: str = ""
-    bureau: str | None = None
-
-
-@app.post("/api/analyse")
-def analyse(body: AnalyseIn, u=Depends(user)):
-    out = service.analyse(body.inst_text, body.subject, body.description, body.bureau or u.get("bureau"), complainant=body.complainant)
-    out["inst_spans"] = resolve.spans(body.inst_text, out["match"]["permanent_id"] or (out["match"]["candidates"][0]["permanent_id"] if out["match"]["candidates"] else None))
+    out = [r for r in rows if (not ql or ql in f"{r['id']} {r['institution']} {r['pid']} {r['city'] or ''}".lower())
+           and (not region or r["region"] == region) and (not nature or r["nature"] == nature) and (not stage or r["stage"] == stage)
+           and (not risk or r["risk"] == risk) and (not holder or r["holder_kind"] == holder)
+           and (not status or (r["status"] == status if status != "open" else bool(r["phase"])))]
+    out.sort(key=lambda r: (0 if r["phase"] else 1, views.urgency(r)))
     return out
 
 
-@app.post("/api/cases")
-def new_case(body: NewCase, u=Depends(need("officer", "management"))):
-    bureau = body.bureau or u.get("bureau")
-    if u["role"] == "officer" and bureau != u["bureau"]:
-        raise HTTPException(403, "you can register cases for your own bureau only")
-    if not body.description.strip() or not body.inst_text.strip():
-        raise HTTPException(400, "institution and complaint text are required")
-    data = body.model_dump()
-    data["bureau"] = bureau
-    r = service.create_case(data, u["name"], u["role"])
-    return {"id": r["id"]}
+@app.get("/api/applications/{app_id}")
+def application(app_id: str, u=Depends(user)):
+    _app(app_id, u)
+    out = views.app_detail(app_id, u, clock.today())
+    audit.log(u["id"], u["role"], "application.viewed", app_id)
+    return out
 
 
-@app.post("/api/import")
-async def import_csv(file: UploadFile = File(...), commit: int = 0, u=Depends(need("officer", "management"))):
-    """A bureau's register (CSV/Excel export). Columns are matched by name; each row is analysed like a new case."""
-    raw = (await file.read()).decode("utf-8-sig", errors="replace")
-    rows = list(csv.DictReader(io.StringIO(raw)))
-    if not rows:
-        raise HTTPException(400, "empty file")
-    cols = {k.lower().strip(): k for k in rows[0]}
+class ActIn(BaseModel):
+    action: str
+    meeting_on: str | None = None
+    mode: str | None = None
+    result: str | None = None
+    deficiencies: list[str] = []
+    remarks: str = ""
+    link: str | None = None
+    decision: str | None = None
+    conditions: list[dict] = []
+    to: str | None = None
+    reason: str = ""
+    text: str = ""
+    files: list[str] = []
 
-    def col(*names):
-        for n in names:
-            for k, orig in cols.items():
-                if n in k:
-                    return orig
-        return None
 
-    m = {"ref": col("ref", "registration", "file no", "case"), "date": col("date", "received"), "who": col("complainant", "name"),
-         "contact": col("contact", "phone", "mobile", "email"), "inst": col("institution", "college", "institute"),
-         "subject": col("subject", "title"), "text": col("description", "complaint", "details", "grievance", "text")}
-    if not m["inst"] or not m["text"]:
-        raise HTTPException(400, "need at least an institution column and a complaint text column")
-    bureau = u.get("bureau") or "PGRC"
-    preview = []
-    for r in rows[:200]:
-        g = lambda k: (r.get(m[k]) or "").strip() if m[k] else ""
-        a = service.analyse(g("inst"), g("subject"), g("text"), bureau)
-        item = {"ref": g("ref"), "inst_text": g("inst"), "subject": g("subject"), "match": a["match"]["state"],
-                "institution": (a["match"]["candidates"][0]["name"] if a["match"]["candidates"] else None),
-                "confidence": a["match"]["confidence"], "category": a["categories"][0]["label"],
-                "suggested_bureau": a["suggested_bureau"], "duplicates": [x["case"] for x in a["possible_duplicates"]]}
-        if commit:
-            rd = g("date")
-            try:
-                rd = date.fromisoformat(rd).isoformat() if rd else None
-            except ValueError:
-                rd = None
-            c = service.create_case({"bureau": bureau, "source": "Register import", "ext_ref": g("ref") or None, "received_on": rd,
-                                     "complainant": g("who"), "contact": g("contact"), "inst_text": g("inst"), "subject": g("subject"),
-                                     "description": g("text")}, u["name"], u["role"])
-            item["id"] = c["id"]
-        preview.append(item)
-    audit.log(u["id"], u["role"], "register.imported" if commit else "register.previewed", file.filename or "upload", {"rows": len(preview)})
-    return {"columns": m, "rows": preview, "committed": bool(commit)}
+@app.post("/api/applications/{app_id}/act")
+def act(app_id: str, body: ActIn, u=Depends(user)):
+    a = _app(app_id, u)
+    step = engine.current_step(a)
+    allowed = views.stage_actions(u, a, step)
+    if body.action not in allowed:
+        raise HTTPException(403, "You cannot do this on this application at its present step")
+    on, who, role = clock.today(), u["id"], u["role"]
+    try:
+        if body.action == "schedule":
+            engine.schedule(app_id, on, d(body.meeting_on), body.mode or "online", who, role)
+        elif body.action == "outcome":
+            engine.record_outcome(app_id, on, body.result or "", body.deficiencies, body.remarks, who, role)
+        elif body.action == "video":
+            engine.video_uploaded(app_id, on, body.link or "", who, role)
+        elif body.action == "comply":
+            engine.submit_compliance(app_id, on, body.remarks, who, role, body.files)
+        elif body.action == "appeal":
+            engine.file_appeal(app_id, on, body.remarks, who, role)
+        elif body.action == "decide":
+            engine.decide(app_id, on, body.decision or "", body.remarks, who, role, body.conditions)
+        elif body.action == "revert":
+            engine.revert(app_id, on, body.to or "", body.reason, who, role)
+        elif body.action == "note":
+            engine.add_note(app_id, on, body.text, who, role)
+    except WorkflowError as e:
+        raise HTTPException(400, str(e))
+    alerts.sweep(on)
+    return views.app_detail(app_id, u, on)
+
+
+@app.get("/api/applications/{app_id}/letter/{kind}")
+def letter(app_id: str, kind: str, u=Depends(user)):
+    _app(app_id, u)
+    if u["role"] == "institution" and kind == "escalation":
+        raise HTTPException(403, "Not available to institutions")
+    try:
+        out = letters.build(kind, app_id, clock.today())
+    except WorkflowError as e:
+        raise HTTPException(400, str(e))
+    audit.log(u["id"], u["role"], "letter.drafted", app_id, {"kind": kind})
+    return out
+
+
+@app.get("/api/evc")
+def evc(region: str = "", u=Depends(need(*STAFF))):
+    on = clock.today()
+    reg = u["region"] if u["role"] == "ro" else region
+    rows = db.q("SELECT s.*, a.region, a.nature, a.pid, a.status AS app_status, i.name AS institution FROM steps s "
+                "JOIN applications a ON a.id=s.app_id JOIN institutions i ON i.pid=a.pid WHERE s.stage='evc'"
+                + (" AND a.region=?" if reg else "") + " ORDER BY s.opened_on", (reg,) if reg else ())
+    out = []
+    for s in rows:
+        a = engine.app(s["app_id"])
+        live = not s["closed_on"]
+        cd = engine.countdown(a, s, on) if live else None
+        m = d(s["meeting_on"])
+        group = ("done" if not live else s["phase"] if s["phase"] != "scheduled" else "report_due" if m and m < on else "scheduled")
+        out.append({"app_id": s["app_id"], "institution": s["institution"], "pid": s["pid"], "region": s["region"],
+                    "nature_label": settings.nature(s["nature"])["label"], "group": group, "phase": s["phase"], "attempt": s["attempt"],
+                    "opened_on": s["opened_on"], "closed_on": s["closed_on"], "due_on": s["due_on"], "meeting_on": s["meeting_on"],
+                    "mode": s["mode"], "outcome": engine.OUTCOME.get(s["outcome"] or "", ""), "waiting": (on - d(s["opened_on"])).days if live else None,
+                    "overdue": max(0, (on - d(s["due_on"])).days) if live else 0, "risk": cd["risk"] if cd else None,
+                    "risk_label": cd["risk_label"] if cd else None, "spare": cd["spare"] if cd else None, "hold_by": cd.get("hold_by") if cd else None,
+                    "schedule_by": cd.get("schedule_by") if cd else None, "why": cd["why"] if cd else None,
+                    "members": db.unj(s["members"], []) or [], "can_schedule": live and u["role"] == "ro" and f"RO:{s['region']}" in u["offices"]})
+    return out
+
+
+# ------------------------------------------------------------------------------------ compliance
+
+@app.get("/api/compliance")
+def compliance_list(kind: str = "", state: str = "", source: str = "", region: str = "", q: str = "", u=Depends(user)):
+    on = clock.today()
+    rows = views.item_rows(on)
+    if u["role"] == "institution":
+        rows = [r for r in rows if r["pid"] == u["pid"] and r["source"] == "test"]
+    elif u["role"] == "ro":
+        rows = [r for r in rows if r["region"] == u["region"]]
+    ql = q.strip().lower()
+    rows = [r for r in rows if (not kind or r["kind"] == kind) and (not source or r["source"] == source) and (not region or r["region"] == region)
+            and (not state or r["state"]["key"] == state or (state == "late" and r["state"]["color"] == "red"))
+            and (not ql or ql in f"{r['institution']} {r['title']} {r['pid']} {r['detail'] or ''}".lower())]
+    order = {"red": 0, "orange": 1, "blue": 2, "grey": 3, "green": 4}
+    rows.sort(key=lambda r: (r["source"] != "test", order.get(r["state"]["color"], 5), r["due_on"] or "9999"))
+    return rows
+
+
+class ItemIn(BaseModel):
+    action: str
+    note: str = ""
+    files: list[str] = []
+    valid_until: str | None = None
+    reason: str = ""
+
+
+@app.post("/api/compliance/{item_id}/act")
+def compliance_act(item_id: str, body: ItemIn, u=Depends(user)):
+    try:
+        it = compliance.item(item_id)
+    except WorkflowError:
+        raise HTTPException(404, "No such item")
+    if it["source"] != "test":
+        raise HTTPException(400, "Real records from public letters are shown for reference only")
+    on, who, role = clock.today(), u["id"], u["role"]
+    try:
+        if body.action == "submit":
+            if role != "institution" or u["pid"] != it["pid"]:
+                raise HTTPException(403, "Only the institution submits evidence")
+            extra = None
+            if it["kind"] in ("document", "lease"):
+                if not body.valid_until:
+                    raise HTTPException(400, "Give the validity date of the renewed document")
+                extra = {"new_document": {"doc_type": it["doc_type"], "issued_on": iso(on), "valid_until": body.valid_until,
+                                          "file_id": body.files[0] if body.files else None}}
+            compliance.submit(item_id, on, body.note, who, role, body.files, extra)
+        elif body.action in ("verify", "return"):
+            if compliance.verifier(it) not in u["offices"]:
+                raise HTTPException(403, "Only the verifying office can do this")
+            compliance.verify(item_id, on, body.action == "verify", body.reason, who, role)
+        elif body.action == "waive":
+            if role not in ("head", "ec"):
+                raise HTTPException(403, "Only the competent authority can waive a condition")
+            compliance.waive(item_id, on, body.reason, who, role)
+        else:
+            raise HTTPException(400, "Unknown action")
+    except WorkflowError as e:
+        raise HTTPException(400, str(e))
+    alerts.sweep(on)
+    return views.item_row(compliance.item(item_id), on, db.q1("SELECT name, region FROM institutions WHERE pid=?", (it["pid"],)))
+
+
+@app.get("/api/compliance/{item_id}")
+def compliance_detail(item_id: str, u=Depends(user)):
+    try:
+        it = compliance.item(item_id)
+    except WorkflowError:
+        raise HTTPException(404, "No such item")
+    inst = db.q1("SELECT name, region FROM institutions WHERE pid=?", (it["pid"],))
+    if u["role"] == "institution" and u["pid"] != it["pid"]:
+        raise HTTPException(403, "Not your institution")
+    if u["role"] == "ro" and inst["region"] != u["region"]:
+        raise HTTPException(403, "Not in your region")
+    on = clock.today()
+    row = views.item_row(it, on, inst)
+    row["history"] = db.q("SELECT * FROM events WHERE item_id=? ORDER BY ts, id", (item_id,))
+    row["alerts"] = db.q("SELECT * FROM alerts WHERE item_id=? ORDER BY on_date DESC, id DESC", (item_id,))
+    row["time"] = engine.time_split(item_id, on)
+    row["can"] = {"submit": u["role"] == "institution" and u.get("pid") == it["pid"] and it["status"] in ("open", "rejected") and it["source"] == "test",
+                  "verify": it["status"] == "submitted" and it["source"] == "test" and compliance.verifier(it) in u["offices"],
+                  "waive": u["role"] in ("head", "ec") and it["status"] in compliance.OPEN and it["source"] == "test"}
+    return row
 
 
 # ------------------------------------------------------------------------------------ institutions
 
 @app.get("/api/institutions")
-def institutions(q: str = "", u=Depends(user)):
-    counts = defaultdict(Counter)
-    for c in db.q("SELECT permanent_id, bureau, status FROM cases WHERE permanent_id IS NOT NULL"):
-        counts[c["permanent_id"]]["total"] += 1
-        if c["status"] != "disposed":
-            counts[c["permanent_id"]][c["bureau"]] += 1
-            counts[c["permanent_id"]]["open"] += 1
-    al = Counter(a["permanent_id"] for a in open_alerts() if a["kind"] != "parallel")
-    rows = list(insts().values())
-    if q.strip():
-        m = resolve.resolve(q, "")
-        ids = [c["permanent_id"] for c in m["candidates"] if c["confidence"] >= 0.4]
-        direct = [r for r in rows if q.lower() in (r["name"] + r["permanent_id"] + r["city"]).lower()]
-        rows = direct + [insts()[i] for i in ids if insts()[i] not in direct]
-    out = []
-    for r in rows:
-        cnt = counts[r["permanent_id"]]
-        out.append({**r, "aliases": db.unj(r["aliases"], []), "total": cnt["total"], "open": cnt["open"],
-                    "open_by_bureau": {b: n for b, n in cnt.items() if b not in ("total", "open")}, "alerts": al[r["permanent_id"]]})
-    if not q.strip():
-        out.sort(key=lambda r: (-r["alerts"], -r["open"], r["name"]))
-    return out
+def institutions(q: str = "", source: str = "", u=Depends(need(*STAFF))):
+    ql = q.strip().lower()
+    rows = db.q("SELECT pid, name, city, state, region, inst_type, source, land, lease_until FROM institutions ORDER BY source DESC, name")
+    if u["role"] == "ro":
+        rows = [r for r in rows if r["region"] == u["region"]]
+    counts = {r["pid"]: r for r in db.q("SELECT pid, COUNT(*) AS apps FROM applications GROUP BY pid")}
+    letters_n = {r["pid"]: r["n"] for r in db.q("SELECT pid, COUNT(*) AS n FROM letters GROUP BY pid")}
+    open_items = {r["pid"]: r["n"] for r in db.q("SELECT pid, COUNT(*) AS n FROM items WHERE status IN ('open','submitted','rejected') GROUP BY pid")}
+    return [{**r, "applications": (counts.get(r["pid"]) or {}).get("apps", 0), "letters": letters_n.get(r["pid"], 0), "open_items": open_items.get(r["pid"], 0)}
+            for r in rows if (not source or r["source"] == source) and (not ql or ql in f"{r['name']} {r['pid']} {r['city'] or ''} {r['state'] or ''}".lower())]
 
 
 @app.get("/api/institutions/{pid}")
 def institution(pid: str, u=Depends(user)):
-    inst = insts().get(pid)
+    inst = db.q1("SELECT * FROM institutions WHERE pid=?", (pid,))
     if not inst:
-        raise HTTPException(404, "institution not found")
-    amap = alerts_by_case()
-    cs = db.q("SELECT * FROM cases WHERE permanent_id=? ORDER BY received_on", (pid,))
-    rows = [row(c, u, amap) for c in cs]
-    lanes = defaultdict(list)
-    for c, r in zip(cs, rows):
-        acts = db.q("SELECT ts, kind, bureau, to_bureau FROM actions WHERE case_id=? ORDER BY ts, id", (c["id"],))
-        segs, cur, start = [], (acts[0]["bureau"] if acts else c["bureau"]), c["received_on"]
-        for a in acts:
-            if a["kind"] == "transferred" and a["to_bureau"]:
-                segs.append({"bureau": cur, "from": start, "to": a["ts"][:10], "moved_to": a["to_bureau"]})
-                cur, start = a["to_bureau"], a["ts"][:10]
-        segs.append({"bureau": cur, "from": start, "to": c["disposed_on"] or today().isoformat()})
-        for s in segs:
-            lanes[s["bureau"]].append({"case": c["id"], "from": s["from"], "to": s["to"], "status": c["status"] if "moved_to" not in s else "transferred",
-                                       "moved_to": s.get("moved_to"), "label": r["category_label"], "alerts": [a["kind"] for a in r["alerts"]],
-                                       "events": [{"ts": a["ts"][:10], "kind": a["kind"], "label": ACTIONS[a["kind"]]["label"]}
-                                                  for a in acts if s["from"] <= a["ts"][:10] <= s["to"] and a["kind"] not in ("note", "linked", "received")]})
-    al = []
-    for a in db.q("SELECT * FROM coordination WHERE permanent_id=? ORDER BY created_at DESC", (pid,)):
-        bs = sorted({db.q1("SELECT bureau FROM cases WHERE id=?", (x,))["bureau"] for x in db.unj(a["cases"], [])})
-        al.append({**_alert_row(a, bs, u), "why": a["why"], "reasons": db.unj(a["reasons"], [])})
-    cats = Counter(r["category_label"] for r in rows)
-    return {**inst, "aliases": db.unj(inst["aliases"], []), "cases": rows, "lanes": dict(lanes), "alerts": al,
-            "categories": cats.most_common(), "today": today().isoformat(),
-            "bureaus": {k: v["name"] for k, v in settings.get()["bureaus"].items()}}
+        raise HTTPException(404, "No such institution")
+    if (u["role"] == "institution" and u["pid"] != pid) or (u["role"] == "ro" and inst["region"] != u["region"]):
+        raise HTTPException(403, "Not in your scope")
+    on = clock.today()
+    card = views.institution_card(inst)
+    blk = compliance.lease_block(inst["lease_until"], card["max_years"]) if inst["land"] == "lease" else None
+    return {"institution": {**card, "programmes": db.unj(inst["programmes"], []) or [], "est_year": inst["est_year"],
+                            "ownership": inst["ownership"], "extra": db.unj(inst["extra"], {}) or {}},
+            "lease": blk, "documents": views.documents(pid, on), "letters": views.letter_rows(pid),
+            "applications": views.app_rows(on, "WHERE a.pid=?", (pid,)),
+            "items": views.item_rows(on, "WHERE pid=?", (pid,))}
 
 
-# ------------------------------------------------------------------------------------ coordination
+@app.get("/api/search")
+def search(q: str, u=Depends(user)):
+    q = q.strip()
+    if len(q) < 2 or u["role"] == "institution":
+        return {"applications": [], "institutions": []}
+    like = f"%{q}%"
+    where, args = _scope(u)
+    apps = db.q(f"SELECT a.id, a.pid, i.name FROM applications a JOIN institutions i ON i.pid=a.pid WHERE {where} AND (a.id LIKE ? OR i.name LIKE ? OR a.pid LIKE ?) LIMIT 8",
+                (*args, like, like, like))
+    insts = db.q("SELECT pid, name, city, source FROM institutions WHERE name LIKE ? OR pid LIKE ? ORDER BY source DESC LIMIT 8", (like, like))
+    return {"applications": apps, "institutions": insts}
 
-@app.get("/api/coordination")
-def coordination(status: str = "open", kind: str = "", u=Depends(user)):
-    if status == "open":
-        rows = db.q("SELECT * FROM coordination WHERE status IN ('open','acknowledged') ORDER BY created_at DESC")
+
+# ------------------------------------------------------------------------------------ alerts, reports
+
+def _my_offices(u: dict) -> list[str]:
+    return list(u["offices"])
+
+
+@app.get("/api/alerts")
+def get_alerts(scope: str = "mine", kind: str = "", u=Depends(user)):
+    if scope == "all" and u["role"] in ("head", "admin"):
+        rows = db.q("SELECT * FROM alerts ORDER BY on_date DESC, id DESC LIMIT 600")
     else:
-        rows = db.q("SELECT * FROM coordination WHERE status IN ('resolved','cleared') ORDER BY updated_at DESC")
+        offs = _my_offices(u)
+        if not offs:
+            return {"rows": [], "unread": 0}
+        rows = db.q(f"SELECT * FROM alerts WHERE to_office IN ({','.join('?' * len(offs))}) ORDER BY on_date DESC, id DESC LIMIT 400", tuple(offs))
+    names = {r["pid"]: r["name"] for r in db.q("SELECT pid, name FROM institutions")}
     out = []
-    for a in rows:
-        if kind and a["kind"] != kind:
-            continue
-        bs = sorted({(db.q1("SELECT bureau FROM cases WHERE id=?", (x,)) or {}).get("bureau") for x in db.unj(a["cases"], [])})
-        out.append({**_alert_row(a, bs, u), "why": a["why"], "closed_note": a["closed_note"]})
-    out.sort(key=lambda a: a["created_at"] or "", reverse=True)
-    out.sort(key=lambda a: overlap.KIND[a["kind"]]["rank"])
-    unconfirmed = db.q("SELECT * FROM cases WHERE match_state IN ('confirm','unmatched') ORDER BY received_on DESC")
-    amap = alerts_by_case()
-    return {"alerts": out, "unconfirmed": [{**row(c, u, amap), "match": db.unj(c["match"], {})} for c in unconfirmed],
-            "kinds": overlap.KIND}
-
-
-@app.get("/api/coordination/{aid}")
-def coordination_detail(aid: str, u=Depends(user)):
-    a = db.q1("SELECT * FROM coordination WHERE id=?", (aid,))
-    if not a:
-        raise HTTPException(404, "not found")
-    amap = alerts_by_case()
-    cs = [db.q1("SELECT * FROM cases WHERE id=?", (x,)) for x in db.unj(a["cases"], [])]
-    rows = []
-    for c in cs:
-        r = row(c, u, amap)
-        r["history"] = [{"ts": h["ts"], "label": ACTIONS[h["kind"]]["label"], "bureau": h["bureau"], "remarks": h["remarks"] if r["visible"] else None}
-                        for h in db.q("SELECT * FROM actions WHERE case_id=? AND kind NOT IN ('note','linked') ORDER BY ts, id", (c["id"],))]
-        r["description"] = c["description"] if r["visible"] else None
-        rows.append(r)
-    bs = sorted({c["bureau"] for c in cs})
-    audit.log(u["id"], u["role"], "coordination.viewed", aid)
-    return {**_alert_row(a, bs, u), "why": a["why"], "reasons": db.unj(a["reasons"], []), "closed_note": a["closed_note"],
-            "case_rows": rows, "bureau_names": {k: v["name"] for k, v in settings.get()["bureaus"].items()},
-            "can_respond": u["role"] == "management" or (u.get("bureau") in bs)}
-
-
-class CoordIn(BaseModel):
-    note: str = ""
-    lead: str | None = None
-
-
-@app.post("/api/coordination/{aid}/{what}")
-def coordination_act(aid: str, what: str, body: CoordIn, u=Depends(need("officer", "management"))):
-    a = db.q1("SELECT * FROM coordination WHERE id=?", (aid,))
-    if not a:
-        raise HTTPException(404, "not found")
-    bs = sorted({db.q1("SELECT bureau FROM cases WHERE id=?", (x,))["bureau"] for x in db.unj(a["cases"], [])})
-    if u["role"] == "officer" and u["bureau"] not in bs:
-        raise HTTPException(403, "your bureau is not part of this alert")
-    now = service.now().isoformat()
-    acks = db.unj(a["acks"], {})
-    if what == "ack":
-        acks[u.get("bureau") or "MGMT"] = {"by": u["name"], "ts": now, "note": body.note}
-        status = "acknowledged" if all(b in acks for b in bs) else a["status"]
-        db.update("coordination", "id", aid, {"acks": acks, "status": status, "updated_at": now})
-        others = [b for b in bs if b != u.get("bureau")]
-        overlap.notify_bureaus(others, "coordination", f"{u.get('bureau') or 'Management'} acknowledged: {a['title']}", coord_id=aid, ts=now,
-                               key=f"{aid}:ack:{u.get('bureau')}:{now}")
-    elif what == "lead":
-        if body.lead not in settings.get()["bureaus"]:
-            raise HTTPException(400, "unknown bureau")
-        db.update("coordination", "id", aid, {"lead": body.lead, "updated_at": now})
-        overlap.notify_bureaus(bs, "coordination", f"Lead for '{a['title']}' set to {body.lead} by {u['name']}", coord_id=aid, ts=now,
-                               key=f"{aid}:lead:{now}")
-    elif what == "resolve":
-        if not body.note.strip():
-            raise HTTPException(400, "write what was agreed")
-        if u["role"] == "officer" and a["lead"] and u["bureau"] != a["lead"]:
-            raise HTTPException(403, f"only the lead bureau ({a['lead']}) or senior management can close this")
-        db.update("coordination", "id", aid, {"status": "resolved", "closed_note": body.note, "updated_at": now})
-        overlap.notify_bureaus(bs, "coordination", f"Closed: {a['title']} ({body.note})", coord_id=aid, ts=now, key=f"{aid}:resolved")
-    else:
-        raise HTTPException(404, "unknown")
-    audit.log(u["id"], u["role"], f"coordination.{what}", aid, body.model_dump())
-    return {"ok": True}
-
-
-# ------------------------------------------------------------------------------------ notifications
-
-def _my_notes(u: dict) -> list[dict]:
-    if u["role"] in ("management", "admin"):
-        rows = db.q("SELECT * FROM notifications WHERE to_bureau='MGMT' OR to_role='management' ORDER BY created_at DESC LIMIT 200")
-    else:
-        rows = db.q("SELECT * FROM notifications WHERE to_bureau=? ORDER BY created_at DESC LIMIT 200", (u["bureau"],))
     for r in rows:
-        r["read"] = u["id"] in db.unj(r["read_by"], [])
-    return rows
-
-
-@app.get("/api/notifications")
-def notifications(u=Depends(user)):
-    rows = _my_notes(u)
-    return {"rows": rows, "unread": sum(not r["read"] for r in rows)}
+        if kind and r["kind"] != kind:
+            continue
+        r["channels"] = db.unj(r["channels"], [])
+        r["read"] = u["id"] in (db.unj(r["read_by"], []) or [])
+        r["to_label"] = engine.holder_label(r["to_office"], names.get(r["to_office"][5:]) if r["to_office"].startswith("INST:") else None)
+        r["institution"] = names.get(r["pid"])
+        out.append(r)
+    return {"rows": out, "unread": sum(not r["read"] for r in out)}
 
 
 class ReadIn(BaseModel):
     ids: list[int] = []
 
 
-@app.post("/api/notifications/read")
-def notifications_read(body: ReadIn, u=Depends(user)):
-    ids = body.ids or [r["id"] for r in _my_notes(u)]
-    with db.tx() as cx:
-        for i in ids:
-            r = cx.execute("SELECT read_by FROM notifications WHERE id=?", (i,)).fetchone()
-            if r:
-                rb = set(db.unj(r["read_by"], []))
-                rb.add(u["id"])
-                cx.execute("UPDATE notifications SET read_by=? WHERE id=?", (db.j(sorted(rb)), i))
+@app.post("/api/alerts/read")
+def read_alerts(body: ReadIn, u=Depends(user)):
+    offs = _my_offices(u)
+    if not offs:
+        return {"ok": True}
+    rows = db.q(f"SELECT id, read_by FROM alerts WHERE to_office IN ({','.join('?' * len(offs))})", tuple(offs))
+    for r in rows:
+        if body.ids and r["id"] not in body.ids:
+            continue
+        rb = db.unj(r["read_by"], []) or []
+        if u["id"] not in rb:
+            db.update("alerts", "id", r["id"], {"read_by": rb + [u["id"]]})
     return {"ok": True}
 
 
-# ------------------------------------------------------------------------------------ reports
-
-def _report(frm: str, to: str) -> dict:
-    cases = db.q("SELECT * FROM cases")
-    recv = [c for c in cases if frm <= c["received_on"] <= to]
-    disp = [c for c in cases if c["disposed_on"] and frm <= c["disposed_on"] <= to]
-    open_end = [c for c in cases if c["received_on"] <= to and (c["status"] != "disposed" or (c["disposed_on"] or "") > to)]
-    end = min(d(to), today())
-
-    def stats(group_key):
-        g = defaultdict(lambda: {"received": 0, "disposed": 0, "in_time": 0, "open": 0, "overdue": 0, "days": []})
-        for c in recv:
-            g[group_key(c)]["received"] += 1
-        for c in disp:
-            k = g[group_key(c)]
-            k["disposed"] += 1
-            tl = timeline(c)
-            k["in_time"] += tl["state"] == "in_time"
-            k["days"].append(tl["age"])
-        for c in open_end:
-            k = g[group_key(c)]
-            k["open"] += 1
-            k["overdue"] += timeline({**c, "status": "under_process"}, end).get("state") == "overdue"
-        out = []
-        for name, v in g.items():
-            days = v.pop("days")
-            v["avg_days"] = round(sum(days) / len(days)) if days else None
-            v["in_time_pct"] = round(100 * v["in_time"] / v["disposed"]) if v["disposed"] else None
-            out.append({"name": name, **v})
-        return sorted(out, key=lambda r: -(r["received"] + r["open"]))
-
-    reg = lambda c: (insts().get(c["permanent_id"] or "") or {}).get("region") or "Not identified"
-    inst_name = lambda c: (insts().get(c["permanent_id"] or "") or {}).get("name") or "Not identified"
-    months = []
-    m0 = date(d(frm).year, d(frm).month, 1)
-    while m0 <= d(to):
-        m1 = date(m0.year + (m0.month == 12), m0.month % 12 + 1, 1)
-        months.append({"month": m0.strftime("%b %Y"), "received": sum(m0.isoformat() <= c["received_on"] < m1.isoformat() for c in cases),
-                       "disposed": sum(bool(c["disposed_on"]) and m0.isoformat() <= c["disposed_on"] < m1.isoformat() for c in cases)})
-        m0 = m1
-    ageing = Counter()
-    for c in open_end:
-        a = (end - d(c["received_on"])).days
-        ageing["0-21 days" if a <= 21 else "22-45 days" if a <= 45 else "46-90 days" if a <= 90 else "Over 90 days"] += 1
-    co = db.q("SELECT * FROM coordination WHERE created_at>=? AND substr(created_at,1,10)<=?", (frm, to))
-    return {
-        "from": frm, "to": to,
-        "totals": {"received": len(recv), "disposed": len(disp), "open_at_end": len(open_end),
-                   "disposal_rate": round(100 * len(disp) / max(1, len(recv))), "overlaps": len([a for a in co if a["kind"] != "parallel"])},
-        "bureau": stats(lambda c: c["bureau"]), "region": stats(reg), "category": stats(lambda c: settings.category(c["category"])["label"]),
-        "status": [{"name": STATUS[s], "n": sum(c["status"] == s for c in cases if c["received_on"] <= to)} for s in STATUS],
-        "institution": stats(inst_name)[:15], "monthly": months,
-        "ageing": [{"name": k, "n": ageing[k]} for k in ("0-21 days", "22-45 days", "46-90 days", "Over 90 days")],
-        "overlaps": [{"name": overlap.KIND[k]["label"], "raised": sum(a["kind"] == k for a in co),
-                      "resolved": sum(a["kind"] == k and a["status"] == "resolved" for a in co),
-                      "open": sum(a["kind"] == k and a["status"] in ("open", "acknowledged") for a in co)} for k in overlap.KIND],
-    }
-
-
 @app.get("/api/reports")
-def reports(frm: str = "", to: str = "", u=Depends(user)):
-    to = to or today().isoformat()
-    frm = frm or (today() - timedelta(days=89)).isoformat()
-    return _report(frm, to)
+def reports(u=Depends(need(*STAFF))):
+    return views.report(clock.today())
 
 
 @app.get("/api/reports.csv")
-def reports_csv(table: str, frm: str = "", to: str = "", u=Depends(user)):
-    to = to or today().isoformat()
-    frm = frm or (today() - timedelta(days=89)).isoformat()
-    rep = _report(frm, to)
-    rows = rep.get(table)
-    if not isinstance(rows, list) or not rows:
-        raise HTTPException(404, "no such table")
+def reports_csv(table: str, u=Depends(need(*STAFF))):
+    r = views.report(clock.today())
+    tables = {"stages": r["overview"]["stages"], "regions": r["overview"]["regions"], "evc": r["evc"], "compliance": r["compliance"],
+              "overdue": [{k: x[k] for k in ("id", "institution", "region", "nature_label", "task", "holder_label", "due_on", "overdue", "risk_label")} for x in r["overdue"]],
+              "applications": [{k: x[k] for k in ("id", "pid", "institution", "region", "nature_label", "status_label", "stage_label", "holder_label",
+                                                  "due_on", "overdue", "risk_label", "spare", "submitted_on", "decided_on")} for x in views.app_rows(clock.today())]}
+    rows = tables.get(table)
+    if rows is None:
+        raise HTTPException(404, "unknown table")
     buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
-    w.writeheader()
-    w.writerows(rows)
-    audit.log(u["id"], u["role"], "report.downloaded", table, {"from": frm, "to": to})
-    return Response(buf.getvalue(), media_type="text/csv",
-                    headers={"Content-Disposition": f'attachment; filename="{table}_{frm}_{to}.csv"'})
+    if rows:
+        w = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+    audit.log(u["id"], u["role"], "report.downloaded", table)
+    return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{table}-{iso(clock.today())}.csv"'})
 
 
-# ------------------------------------------------------------------------------------ settings, audit, search
+# ------------------------------------------------------------------------------------ rules, settings, handbook
 
-@app.get("/api/settings")
-def get_settings(u=Depends(user)):
+@app.get("/api/rules")
+def rules(u=Depends(user)):
     s = settings.get()
-    return {"settings": s, "overrides": settings.overrides(), "model": ai.backend()}
+    cites = {k: {**v, "key": k, "loc": aph.locations().get(k)} for k, v in s["cites"].items()}
+    natures = [{"id": k, "label": v["label"], "route": v["route"], "aa": v.get("aa", []), "deposit": bool(v.get("deposit")),
+                "chapter": v.get("chapter", "II")} for k, v in s["natures"].items()]
+    return {"cycle": s["cycle"], "stages": s["stages"], "natures": natures, "alerts": s["alerts"], "documents": s["documents"],
+            "deposit": s["deposit"], "conditions": s["conditions"], "regions": s["regions"], "cites": cites,
+            "overrides": settings.overrides()}
 
 
 class SettingIn(BaseModel):
     key: str
-    value: object
-
-
-EDITABLE = ("categories.", "escalation", "matching.", "institution_reply_days")
+    value: Any
+    reason: str
 
 
 @app.put("/api/settings")
 def put_setting(body: SettingIn, u=Depends(need("admin"))):
-    if not body.key.startswith(EDITABLE):
-        raise HTTPException(400, "this setting cannot be changed here")
-    parts = body.key.split(".")
-    if parts[0] == "categories":
-        if len(parts) != 3 or parts[1] not in settings.get()["categories"] or parts[2] not in ("days", "bureau", "label"):
-            raise HTTPException(400, "unknown category setting")
-        if parts[2] == "days" and not (isinstance(body.value, int) and 1 <= body.value <= 365):
-            raise HTTPException(400, "days must be 1-365")
-        if parts[2] == "bureau" and body.value not in settings.get()["bureaus"]:
-            raise HTTPException(400, "unknown bureau")
-    settings.put(body.key, body.value, u["name"])
-    audit.log(u["id"], u["role"], "settings.changed", body.key, {"value": body.value})
-    if parts[0] == "categories" and parts[2] == "days":
-        for c in db.q("SELECT id, received_on FROM cases WHERE category=?", (parts[1],)):
-            db.update("cases", "id", c["id"], {"due_on": service.due_for(parts[1], c["received_on"])})
-        service.sweep()
+    if body.key == "cycle.today":
+        raise HTTPException(400, "Use the demo clock to move the date")
+    if len(body.reason.strip()) < 5:
+        raise HTTPException(400, "Record the reason for the change")
+    try:
+        old = settings.lookup(body.key)
+    except KeyError:
+        raise HTTPException(400, "Unknown setting")
+    if isinstance(old, bool) != isinstance(body.value, bool) or (isinstance(old, (int, float)) and not isinstance(body.value, (int, float))) \
+            or (isinstance(old, str) and not isinstance(body.value, str)) or (isinstance(old, list) and not isinstance(body.value, list)):
+        raise HTTPException(400, "The new value is not of the same kind as the old one")
+    settings.put(body.key, body.value, u["id"], body.reason.strip())
+    audit.log(u["id"], u["role"], "settings.changed", body.key, {"old": old, "new": body.value, "reason": body.reason.strip()})
+    alerts.sweep(clock.today())
     return {"ok": True}
 
 
+@app.get("/api/aph/{key}")
+def aph_cite(key: str):
+    c = aph.cite(key)
+    if not c:
+        raise HTTPException(404, "unknown clause")
+    return c
+
+
+@app.get("/api/aph/page/{n}.png")
+def aph_page(n: int):
+    p = aph.page_file(n)
+    if not p:
+        raise HTTPException(404, "page not available")
+    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
+# ------------------------------------------------------------------------------------ audit, evaluation, files
+
 @app.get("/api/audit")
-def get_audit(limit: int = 300, target: str = "", u=Depends(need("management", "admin", "officer"))):
+def get_audit(limit: int = 300, target: str = "", u=Depends(need(*STAFF))):
     if target:
-        rows = db.q("SELECT * FROM audit WHERE target LIKE ? ORDER BY seq DESC LIMIT ?", (f"%{target}%", limit))
+        rows = db.q("SELECT * FROM audit WHERE target=? ORDER BY seq DESC LIMIT ?", (target, limit))
     else:
         rows = db.q("SELECT * FROM audit ORDER BY seq DESC LIMIT ?", (limit,))
     for r in rows:
         r["payload"] = db.unj(r["payload"], {})
-    return {"entries": rows, "chain": audit.verify_chain()}
-
-
-@app.get("/api/search")
-def search(q: str, u=Depends(user)):
-    q = q.strip()
-    if len(q) < 2:
-        return {"cases": [], "institutions": []}
-    cs = db.q("SELECT id, bureau, status, permanent_id FROM cases WHERE id LIKE ? OR ext_ref LIKE ? LIMIT 8", (f"%{q}%", f"%{q}%"))
-    for c in cs:
-        c["institution"] = (insts().get(c["permanent_id"] or "") or {}).get("name")
-    m = resolve.resolve(q, "")
-    direct = [r for r in insts().values() if q.lower() in (r["name"] + " " + r["permanent_id"]).lower()]
-    seen = {r["permanent_id"] for r in direct}
-    fuzzy = [insts()[c["permanent_id"]] for c in m["candidates"] if c["confidence"] >= 0.45 and c["permanent_id"] not in seen]
-    return {"cases": cs, "institutions": [{"permanent_id": r["permanent_id"], "name": r["name"], "city": r["city"]} for r in (direct + fuzzy)[:8]]}
+    return {"rows": rows, "chain": audit.verify_chain(), "total": db.q1("SELECT COUNT(*) AS n FROM audit")["n"]}
 
 
 @app.get("/api/eval")
 def get_eval(u=Depends(user)):
     p = DATA / "eval_report.json"
     if not p.exists():
-        raise HTTPException(404, "run scripts/evaluate.py")
+        raise HTTPException(404, "Run scripts/evaluate.py")
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-@app.get("/api/meta")
-def meta(u=Depends(user)):
-    s = settings.get()
-    return {"bureaus": [{"id": k, "name": v["name"]} for k, v in s["bureaus"].items()],
-            "regions": list(s["regions"].keys()),
-            "categories": [{"id": k, "label": v["label"], "bureau": v["bureau"], "days": v["days"]} for k, v in s["categories"].items()],
-            "statuses": [{"id": k, "label": v} for k, v in STATUS.items()], "today": today().isoformat()}
+@app.post("/api/files")
+async def upload(file: UploadFile = File(...), u=Depends(user)):
+    raw = await file.read()
+    if len(raw) > 15 * 1024 * 1024:
+        raise HTTPException(400, "Files up to 15 MB")
+    sha = hashlib.sha256(raw).hexdigest()
+    ext = (file.filename or "").rsplit(".", 1)[-1][:6].lower() if "." in (file.filename or "") else "bin"
+    path = UPLOADS / f"{sha}.{ext}"
+    path.write_bytes(raw)
+    fid = f"F-{sha[:12]}"
+    db.insert("files", {"id": fid, "name": file.filename, "mime": file.content_type, "path": str(path), "sha256": sha, "size": len(raw),
+                        "uploaded_by": u["id"], "uploaded_on": iso(clock.today())}, replace=True)
+    audit.log(u["id"], u["role"], "file.uploaded", fid, {"name": file.filename, "sha256": sha})
+    return {"id": fid, "name": file.filename, "sha256": sha}
 
 
-# ------------------------------------------------------------------------------------ background timeline check
+@app.get("/api/files/{fid}")
+def get_file(fid: str, u=Depends(user)):
+    f = db.q1("SELECT * FROM files WHERE id=?", (fid,))
+    if not f:
+        raise HTTPException(404, "No such file")
+    if u["role"] == "institution" and f["uploaded_by"] != u["id"]:
+        raise HTTPException(403, "Not your file")
+    return FileResponse(f["path"], media_type=f["mime"] or "application/octet-stream", filename=f["name"])
 
-def _sweeper():
+
+# ------------------------------------------------------------------------------------ daily check (real-date mode)
+
+def _daily():
+    last = clock.today()
     while True:
+        time.sleep(600)
         try:
-            service.sweep()
-        except Exception:  # never let the background check stop the server
+            if not clock.is_demo() and clock.today() > last:
+                alerts.run_until(last + timedelta(days=1), clock.today())
+                last = clock.today()
+        except Exception:   # never let the background check stop the server
             pass
-        time.sleep(900)
 
 
 @app.on_event("startup")
 def _start():
-    threading.Thread(target=lambda: (ai.backend(), _sweeper()), daemon=True).start()
+    threading.Thread(target=_daily, daemon=True).start()
 
 
 # ------------------------------------------------------------------------------------ static frontend
 
 DIST = ROOT / "frontend" / "dist"
-if DIST.exists():
+if DIST.exists() and (DIST / "assets").exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
-    @app.get("/{path:path}")
-    def spa(path: str):
-        f = DIST / path
-        if path and f.is_file():
-            return FileResponse(f)
-        return FileResponse(DIST / "index.html")
+
+@app.get("/{path:path}")
+def spa(path: str):
+    if path.startswith("api/"):
+        raise HTTPException(404, "not found")
+    f = DIST / path
+    if path and f.is_file():
+        return FileResponse(f)
+    if not (DIST / "index.html").exists():
+        return HTMLResponse("<p>Build the frontend first: cd frontend && npm install && npm run build</p>")
+    html = (DIST / "index.html").read_text(encoding="utf-8").replace("__BRAND__", f"{BRAND['name']} · {BRAND['tagline']}")
+    return HTMLResponse(html)

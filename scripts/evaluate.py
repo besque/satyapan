@@ -1,190 +1,373 @@
-"""Measure the three automatic judgements on test inputs, and write data/eval_report.json.
+"""Test results (data/eval_report.json, shown on the Test results page).
 
-1. Institution matching: every institution written in the ways complainants write it (full name, with
-   city, abbreviated, acronym, misspelt, lower-case, Hindi, former name).
-2. Nature of complaint: complaints written for this test only (not the demo templates, not the
-   category descriptions in settings.yaml), in English and Hindi.
-3. Same matter: pairs of complaints about the same incident (re-worded, or in the other language)
-   against pairs about different matters at the same institution.
-All inputs are synthetic. Run after scripts/seed.py:  python scripts/evaluate.py
+1. Routing: every nature of application in APH Table 2.3, driven through the real workflow engine under several
+   outcome scenarios, checked against the table as printed (encoded here by hand, separately from settings.yaml).
+2. Rules: lease rule, security-deposit ladder, appeal window, certificate validity, compliance windows, countdown.
+3. Alert timeliness: simulated approval cycles (independent random draws, not the demo data). For applications
+   that end up decided after the Academic Calendar date, how early was each method warning?
+     - time allowed per step: warn when any step is past its time allowed (the usual pendency alert)
+     - countdown: warn when the calendar date is short at the usual pace (this system)
+4. Real data, follow-ups sent automatically, and completeness of the activity log (from the demo database).
+Run:  python scripts/evaluate.py      (after scripts/seed.py)
 """
 from __future__ import annotations
 
 import json
+import os
 import random
+import sqlite3
+import statistics
 import sys
-import time
-from collections import Counter, defaultdict
+import tempfile
+from collections import Counter
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+ROOT = Path(__file__).resolve().parents[1]
+DEMO_DB = ROOT / "data" / "app.sqlite"
+TMP = Path(tempfile.mkdtemp()) / "eval.sqlite"
+os.environ["APP_DB"] = str(TMP)           # the engine works on a scratch database here
+sys.path.insert(0, str(ROOT / "backend"))
 
-from app import ai, db, demo, overlap, resolve, settings  # noqa: E402
-from app.config import DATA  # noqa: E402
+from app import compliance, db, engine, settings  # noqa: E402
+from app.clock import add_months, d, iso  # noqa: E402
 
-CATEGORY_TESTS = [
-    ("fee_refund", "Admission surrendered in the first week itself, still the institute has not paid back the 72,000 I deposited."),
-    ("fee_refund", "Kindly help me get my money back, I left the course in September and the college says no refund."),
-    ("fee_refund", "सीट छोड़ने के तीन महीने बाद भी कॉलेज ने जमा किए पैसे नहीं लौटाए।"),
-    ("certificates_withheld", "The principal says my mark sheets will be given only after I clear dues for the full course."),
-    ("certificates_withheld", "I need my school leaving certificate and 12th marks card back from the college for a new job."),
-    ("certificates_withheld", "कॉलेज ने मेरी 12वीं की मार्कशीट रोक रखी है, नौकरी के लिए चाहिए।"),
-    ("excess_fee", "Every student was told to pay 40,000 'lab development charges' on top of the approved fee."),
-    ("excess_fee", "Seat was offered only if we paid 3 lakh in cash to the trust, apart from fees."),
-    ("excess_fee", "फीस के अलावा हर छात्र से 30 हजार नकद लिए गए, कोई रसीद नहीं।"),
-    ("ragging", "Second-years shaved the heads of freshers and made them dance at midnight in the hostel."),
-    ("ragging", "My brother is too scared to go back to the hostel because seniors hit him last week."),
-    ("ragging", "हॉस्टल में सीनियरों ने नए छात्रों को रात भर परेशान किया और पीटा।"),
-    ("faculty_issues", "Teachers have been working without pay since June and many have left."),
-    ("faculty_issues", "Names of professors on the college website are of people who left years ago; no one teaches us."),
-    ("faculty_issues", "प्राध्यापकों का वेतन छह महीने से रुका हुआ है।"),
-    ("infrastructure", "There is no computer centre, and the workshop machines have not worked for two years."),
-    ("infrastructure", "The college runs from two floors of a shopping complex; there is no playground or hostel."),
-    ("infrastructure", "लैब में कोई उपकरण नहीं है, लाइब्रेरी में किताबें नहीं।"),
-    ("unapproved_admission", "Sixty extra students were enrolled in mechanical beyond the sanctioned seats."),
-    ("unapproved_admission", "The diploma course we joined does not appear on the AICTE approved list."),
-    ("scholarship", "As an SC student my fee is paid by the state scheme, but the college still asks me to deposit the tuition."),
-    ("scholarship", "I got admission under the fee waiver quota but now they want full tuition."),
-    ("exam_result", "Our sixth semester marks have not come even after five months."),
-    ("exam_result", "Hall tickets were not issued by the college, so twenty of us missed the exam."),
-    ("harassment", "The head of department keeps making remarks about my caste and threatens to fail me."),
-    ("harassment", "I was thrown out of the hostel after I spoke to a newspaper about the fees."),
-]
-
-SAME_PAIRS = [  # (category, text A, text B): same incident, different wording or language
-    ("fee_refund", "I cancelled my MBA seat on 3 July; the refund of Rs 1,10,000 has not come.",
-     "मैंने 3 जुलाई को एमबीए की सीट रद्द की थी, 1,10,000 रुपये की वापसी अब तक नहीं हुई।"),
-    ("certificates_withheld", "The college has kept my 10th and 12th originals and asks Rs 50,000 to return them.",
-     "कॉलेज मेरे 10वीं और 12वीं के मूल प्रमाणपत्र लौटाने के लिए 50,000 रुपये मांग रहा है।"),
-    ("ragging", "Seniors beat my son in hostel block C on Saturday night.",
-     "My son was assaulted by senior students in hostel C on the night of Saturday; he is in shock."),
-    ("excess_fee", "Rs 25,000 bus fee is compulsory even for students who live next to the college.",
-     "College forces every student, even day scholars living nearby, to pay 25,000 as transport fee."),
-    ("faculty_issues", "Salary of all teaching staff is pending from April.",
-     "अप्रैल से सभी शिक्षकों का वेतन बकाया है।"),
-    ("infrastructure", "No chemistry lab; practicals are just written in the record book.",
-     "There is no chemistry laboratory at all and we only copy practicals into our records."),
-    ("scholarship", "My post-matric scholarship came to the college account but they still demand fees from me.",
-     "छात्रवृत्ति कॉलेज के खाते में आ गई फिर भी कॉलेज मुझसे फीस मांग रहा है।"),
-    ("exam_result", "Semester results of Electrical branch from May are still not declared.",
-     "Results of the May semester exam for the electrical students have not been announced yet."),
-]
-
-DIFFERENT_PAIRS = [  # same institution, different matters
-    ("fee_refund", "I cancelled my MBA seat on 3 July; the refund of Rs 1,10,000 has not come.",
-     "ragging", "Seniors beat my son in hostel block C on Saturday night."),
-    ("certificates_withheld", "The college has kept my 10th and 12th originals and asks Rs 50,000 to return them.",
-     "infrastructure", "No chemistry lab; practicals are just written in the record book."),
-    ("faculty_issues", "Salary of all teaching staff is pending from April.",
-     "scholarship", "My post-matric scholarship came to the college account but they still demand fees from me."),
-    ("exam_result", "Semester results of Electrical branch from May are still not declared.",
-     "excess_fee", "Rs 25,000 bus fee is compulsory even for students who live next to the college."),
-    ("harassment", "The hostel warden threatens girls who complain about the food.",
-     "fee_refund", "Refund of caution deposit of Rs 10,000 not given after I finished the course."),
-    ("ragging", "हॉस्टल में सीनियरों ने मारपीट की।", "certificates_withheld", "कॉलेज मूल अंकतालिका वापस नहीं कर रहा।"),
-    ("infrastructure", "No library books for third year.", "faculty_issues", "Three teachers resigned because they were not paid."),
-    ("scholarship", "Fee waiver denied though I am in the TFW list.", "exam_result", "Degree certificate not issued two years after passing."),
-]
+# APH Table 2.3 as printed on page 30 (self-disclosure, scrutiny / re-scrutiny, EVC, SAC/SHC) + Chapter I.
+TABLE = {
+    "eoa_self_disclosure": ("Yes", "-", "-", "-"), "nri_seats": ("Yes", "-", "-", "-"), "conversion_level": ("-", "Yes", "Yes", "AA"),
+    "name_change": ("-", "Yes", "-", "-"), "new_programme": ("-", "Yes", "Yes", "AA"), "merger": ("-", "Yes", "Yes", "AA"),
+    "eoa_after_break": ("-", "Yes", "Yes", "AA"), "fn_oci_seats": ("-", "Yes", "-", "-"), "increase_intake": ("-", "Yes", "Yes", "AA"),
+    "integrated_dual": ("-", "Yes", "Yes", "AA"), "fpm": ("-", "Yes", "Yes", "AA"), "course_change": ("-", "Yes", "-", "-"),
+    "collaboration": ("-", "Yes", "Yes", "AA"), "change_of_site": ("-", "Yes", "Yes", "AA"), "closure_institution": ("-", "Yes", "-", "-"),
+    "women_coed": ("-", "Yes", "-", "-"), "closure_programme": ("-", "Yes", "-", "-"), "bank_details": ("-", "Yes", "-", "-"),
+    "trust_name_change": ("-", "Yes", "-", "-"), "deemed_university": ("-", "Yes", "Yes", "AA"), "odl_online": ("-", "Yes", "Yes", "AA"),
+    "new_institution": ("-", "Yes", "Yes", "AA"),
+}
+PROCEDURAL = {"compliance", "ec"}   # steps every route has around the committees
 
 
-def institution_matching(rng):
-    insts = demo.institutions(random.Random(7))   # same institutions as the seeded master
-    master = {r["name"]: r["permanent_id"] for r in db.q("SELECT name, permanent_id FROM institutions")}
-    per_style = defaultdict(Counter)
-    examples = []
-    for inst in insts:
-        styles = ["full", "city", "abbrev", "acronym", "misspelt", "misspelt", "lower"]
-        if inst["state"] in demo.HINDI_STATES:
-            styles.append("hindi")
-        if inst["aliases"]:
-            styles.append("former")
-        for st in styles:
-            text = demo.mention(inst, st, rng)
-            r = resolve.resolve(text, "")
-            truth = master[inst["name"]]
-            top = r["candidates"][0]["permanent_id"] if r["candidates"] else None
-            if r["state"] == "auto":
-                outcome = "auto_correct" if r["permanent_id"] == truth else "auto_wrong"
-            elif r["state"] == "confirm":
-                outcome = "confirm_top_correct" if top == truth else "confirm_top_wrong"
+def tri(r, lo, hi, mode):
+    return int(round(r.triangular(lo, hi, mode)))
+
+
+# ------------------------------------------------------------------------------------ 1. routing
+
+def drive(nature: str, scenario: str) -> list[tuple[str, str]]:
+    """Run one application through the engine; return (stage, outcome) in order."""
+    pid = f"T-{nature}"
+    if not db.q1("SELECT pid FROM institutions WHERE pid=?", (pid,)):
+        db.insert("institutions", {"pid": pid, "name": f"Route test {nature}", "region": "Central", "ownership": "Private", "land": "own",
+                                   "programmes": [{"years": 4}], "source": "test"})
+    on = date(2027, 1, 5)
+    a = engine.create_application(pid, nature, on, "Central", app_id=f"R-{nature}-{scenario}")
+    first_check_done = False
+    for _ in range(30):
+        a = engine.app(a["id"])
+        step = engine.current_step(a)
+        if not step:
+            break
+        st = step["stage"]
+        on += timedelta(days=1)
+        if st in engine.COMMITTEES and step["phase"] in ("to_schedule", "awaiting_video"):
+            engine.schedule(a["id"], on, on + timedelta(days=7), "physical", "t", "t")
+            continue
+        if st in engine.COMMITTEES or st == "self_disclosure":
+            if st == "sac":
+                engine.record_outcome(a["id"], on, "recommend", [], "", "t", "t")
+                continue
+            first = st in ("scrutiny", "self_disclosure") and not first_check_done
+            has_evc = "evc" in settings.nature(nature)["route"]
+            if scenario == "deficient_first":
+                bad = first
+            elif scenario == "deficient_late":        # EVC finds deficiencies (or, without an EVC, re-scrutiny does)
+                bad = st == "evc" if has_evc else (first or st == "re_scrutiny")
+            elif scenario == "appeal":                # deficiencies at EVC and at the hearing, then an appeal
+                bad = st in ("evc", "shc")
             else:
-                outcome = "unmatched"
-            per_style[st][outcome] += 1
-            if outcome in ("auto_wrong", "confirm_top_wrong", "unmatched") and len(examples) < 12:
-                examples.append({"text": text, "truth": inst["name"], "got": r["candidates"][0]["name"] if r["candidates"] else None,
-                                 "outcome": outcome, "confidence": r["confidence"]})
-    total = Counter()
-    for c in per_style.values():
-        total.update(c)
-    n = sum(total.values())
-    return {"n": n, "overall": {k: round(100 * v / n, 1) for k, v in total.items()},
-            "by_style": {s: dict(c) for s, c in per_style.items()}, "misses": examples}
+                bad = False
+            first_check_done = first_check_done or st in ("scrutiny", "self_disclosure")
+            engine.record_outcome(a["id"], on, "deficient" if bad else "in_order", ["test deficiency"] if bad else [], "", "t", "t")
+        elif st == "compliance":
+            engine.submit_compliance(a["id"], on, "done", "t", "t")
+        elif st in ("ec", "council"):
+            dec = "lod" if st == "ec" and scenario in ("deficient_late", "appeal") and db.unj(a["deficiencies"], []) else "approve"
+            engine.decide(a["id"], on, dec, "", "t", "t")
+        elif st == "appeal":
+            engine.file_appeal(a["id"], on, "grounds", "t", "t")
+    return [(s["stage"], s["outcome"] or "") for s in db.q("SELECT stage, outcome FROM steps WHERE app_id=? ORDER BY id", (a["id"],))]
 
 
-def categories():
-    rows, top1, top3 = [], 0, 0
-    for cat, text in CATEGORY_TESTS:
-        r = ai.classify(text)
-        ok1, ok3 = r[0]["category"] == cat, cat in [x["category"] for x in r]
-        top1 += ok1
-        top3 += ok3
-        rows.append({"expected": settings.category(cat)["label"], "got": r[0]["label"], "score": r[0]["score"], "ok": ok1,
-                     "lang": "hi" if any("ऀ" <= ch <= "ॿ" for ch in text) else "en", "text": text})
-    n = len(CATEGORY_TESTS)
-    return {"n": n, "top1": round(100 * top1 / n, 1), "top3": round(100 * top3 / n, 1), "rows": rows}
+def check_route(nature: str, scenario: str, path: list[tuple[str, str]]) -> list[str]:
+    sd, scr, evc, aa = TABLE[nature]
+    stages = [s for s, _ in path]
+    problems = []
+    yes = {"self_disclosure"} if sd == "Yes" else set()
+    yes |= {"scrutiny"} if scr == "Yes" else set()
+    yes |= {"evc"} if evc == "Yes" else set()
+    for s in yes:
+        if s not in stages:
+            problems.append(f"missing {s}")
+    allowed = yes | PROCEDURAL | ({"re_scrutiny"} if (scr == "Yes" or sd == "Yes") else set())
+    if aa == "AA":
+        allowed |= {"shc", "sac", "appeal", "council"}
+    for s in stages:
+        if s not in allowed:
+            problems.append(f"{s} not in Table 2.3 for this nature")
+    for s in ("shc", "sac"):          # "as applicable": only after a deficiency or a decision against the institution
+        if s in stages:
+            before = path[:stages.index(s)]
+            if not any(o in ("deficient", "lod", "reject") for _, o in before):
+                problems.append(f"{s} without a deficient outcome before it")
+    if "evc" in stages and "scrutiny" in stages and stages.index("evc") < stages.index("scrutiny"):
+        problems.append("EVC before scrutiny")
+    if "ec" not in stages:
+        problems.append("never reached the Executive Committee")
+    return problems
 
 
-def same_matter():
-    thr = settings.get()["matching"]["same_matter"]
-
-    def case(cat, text, i):
-        return {"id": f"t{i}", "subject": "", "description": text, "category": cat, "category_ai": ai.classify(text),
-                "lang": "hi" if any("ऀ" <= ch <= "ॿ" for ch in text) else "en", "received_on": "2026-09-01",
-                "contact_hash": None, "complainant": None}
+def routing() -> dict:
     rows = []
-    for i, (cat, a, b) in enumerate(SAME_PAIRS):
-        x, y = case(cat, a, 2 * i), case(cat, b, 2 * i + 1)
-        x["category"], y["category"] = x["category_ai"][0]["category"], y["category_ai"][0]["category"]
-        v = ai.embed([a, b])
-        pm = overlap.same_matter(x, y, v[0], v[1], {})
-        rows.append({"truth": "same", "score": pm["score"], "predicted_same": pm["same"], "a": a, "b": b})
-    for i, (ca, a, cb, b) in enumerate(DIFFERENT_PAIRS):
-        x, y = case(ca, a, 100 + 2 * i), case(cb, b, 101 + 2 * i)
-        x["category"], y["category"] = x["category_ai"][0]["category"], y["category_ai"][0]["category"]
-        v = ai.embed([a, b])
-        pm = overlap.same_matter(x, y, v[0], v[1], {})
-        rows.append({"truth": "different", "score": pm["score"], "predicted_same": pm["same"], "a": a, "b": b})
-    tp = sum(r["truth"] == "same" and r["predicted_same"] for r in rows)
-    fp = sum(r["truth"] == "different" and r["predicted_same"] for r in rows)
-    fn = sum(r["truth"] == "same" and not r["predicted_same"] for r in rows)
-    cross = [r for r in rows if r["truth"] == "same" and any("ऀ" <= ch <= "ॿ" for ch in r["b"])]
-    return {"threshold": thr, "pairs": len(rows), "precision": round(100 * tp / max(1, tp + fp), 1),
-            "recall": round(100 * tp / max(1, tp + fn), 1),
-            "cross_language_found": f"{sum(r['predicted_same'] for r in cross)} of {len(cross)}", "rows": rows}
+    for nature in TABLE:
+        scenarios = ["all_in_order", "deficient_first", "deficient_late"] + (["appeal"] if TABLE[nature][3] == "AA" else [])
+        for sc in scenarios:
+            path = drive(nature, sc)
+            probs = check_route(nature, sc, path)
+            rows.append({"nature": nature, "label": settings.nature(nature)["label"], "scenario": sc,
+                         "path": " → ".join(f"{settings.stage(s)['short']}{' (' + engine.OUTCOME.get(o, o).lower() + ')' if o else ''}" for s, o in path),
+                         "ok": not probs, "problems": probs})
+    return {"natures": len(TABLE), "cases": len(rows), "passed": sum(r["ok"] for r in rows), "rows": rows}
 
 
-def main():
-    t = time.time()
-    rng = random.Random(99)
-    rep = {"model": ai.backend(), "institution_matching": institution_matching(rng), "nature_of_complaint": categories(),
-           "same_matter": same_matter(), "seconds": None,
-           "note": "All test inputs are synthetic and written for this test. Real complaints will be messier; "
-                   "these figures show behaviour, not field accuracy."}
-    rep["seconds"] = round(time.time() - t, 1)
-    (DATA / "eval_report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1), encoding="utf-8")
-    im = rep["institution_matching"]
-    print("institution matching", im["n"], im["overall"])
-    print("nature", rep["nature_of_complaint"]["top1"], rep["nature_of_complaint"]["top3"])
-    sm = rep["same_matter"]
-    print("same matter P/R", sm["precision"], sm["recall"], "cross-language", sm["cross_language_found"])
-    for m in im["misses"]:
-        print("  miss", m)
-    for r in rep["nature_of_complaint"]["rows"]:
-        if not r["ok"]:
-            print("  cat", r["expected"], "->", r["got"], r["score"], r["text"][:60])
-    for r in sm["rows"]:
-        if r["predicted_same"] != (r["truth"] == "same"):
-            print("  pair", r["truth"], r["score"], r["a"][:40], "|", r["b"][:40])
+# ------------------------------------------------------------------------------------ 2. rules
+
+def rules() -> dict:
+    rows = []
+
+    def case(rule, desc, expected, got, cite):
+        rows.append({"rule": rule, "case": desc, "expected": str(expected), "got": str(got), "ok": str(expected) == str(got), "cite": cite})
+
+    for lease, years, exp in [("2031-06-30", 4, "2027-28"), ("2033-03-31", 4, "2029-30"), ("2032-07-01", 5, "2027-28"),
+                              ("2040-06-30", 2, "2038-39"), ("2060-12-31", 4, "2057-58")]:
+        b = compliance.lease_block(lease, years)
+        case("Lease rule", f"lease to {lease}, longest course {years} years: EoA blocked from", exp, b["blocked_ay"] if b else None, "CL_2_1_E")
+    it = {"status": "open", "due_on": "2027-05-14", "extra": json.dumps({"amount_lakh": 15})}
+    for on, exp in [("2027-05-10", "due"), ("2027-05-20", "penalty_10"), ("2027-06-15", "penalty_20"), ("2027-08-02", "withdraw")]:
+        case("Security deposit", f"intimated 29 Apr, on {on}", exp, compliance.deposit_state(it, d(on))["stage"], "CL_2_25_F")
+    case("Appeal window", "Letter of Deficiency on 13 May 2027: appeal allowed until", "2027-05-20",
+         iso(date(2027, 5, 13) + timedelta(days=settings.stage("appeal")["days"])), "CL_2_24_A")
+    case("Structural stability", "issued 20 Jun 2022, valid five years: until", "2027-06-20", iso(add_months(date(2022, 6, 20), 60)), "CL_6_17_H")
+    case("EoA letter", "issued 10 Apr 2026, 'within Six Months': due", "2026-10-10", iso(add_months(date(2026, 4, 10), 6)), "EOA_LETTER")
+    case("EoA letter", "issued 30 Jun 2024, 'within One year': due", "2025-06-30", iso(add_months(date(2024, 6, 30), 12)), "EOA_LETTER")
+    # countdown: EVC still to be fixed on 17 May; last EC meeting before 10 Jun is 8 Jun, with 3 days to place the case
+    a = {"id": "X", "nature": "increase_intake", "region": "Central", "detail": "{}"}
+    step = {"stage": "evc", "phase": "to_schedule", "due_on": "2027-05-03", "meeting_on": None, "extra": "{}"}
+    cd = engine.countdown(a, step, date(2027, 5, 17))
+    case("Countdown", "EVC not yet fixed on 17 May: must finish by", "2027-06-05", cd["finish_by"], "CL_2_25_J")
+    case("Countdown", "same: spare days at the usual pace", 10, cd["spare"], "CL_2_25_J")
+    case("Countdown", "same: one more deficiency round (SHC, 14 days)", "at_risk", cd["risk"], "CL_2_23_3")
+    step2 = {"stage": "evc", "phase": "scheduled", "due_on": "2027-06-10", "meeting_on": "2027-06-08", "extra": "{}"}
+    case("Countdown", "EVC fixed for 8 Jun: classed", "will_miss", engine.countdown({**a, "nature": "new_institution"}, step2, date(2027, 4, 15))["risk"], "CL_2_25_J")
+    return {"cases": len(rows), "passed": sum(r["ok"] for r in rows), "rows": rows}
+
+
+# ------------------------------------------------------------------------------------ 3. alert timeliness
+
+def simulate(r: random.Random, nature: str, region: str, submitted: date) -> tuple[list[dict], date | None]:
+    """One application's phases at random (same kind of draws as the demo, separate random stream)."""
+    s = settings.get()
+    n = settings.nature(nature)
+    aa = n.get("aa") or []
+    w = engine.window_of(nature, region)
+    sfrom = d(w["scrutiny_from"])
+    phases: list[dict] = []
+    t = submitted
+    stage, extra, defs = n["route"][0], {}, False
+    after_scr = engine._after_scrutiny({"nature": nature})
+    while True:
+        cfg = settings.stage(stage)
+        if stage == "self_disclosure":
+            end = t + timedelta(days=tri(r, 1, 11, 4))
+            phases.append({"stage": stage, "phase": "review", "start": t, "end": end, "due_on": t + timedelta(days=cfg["days"])})
+            bad = r.random() < .22
+            defs = bad
+            t, stage = end, ("compliance" if bad else "ec")
+            extra = {"return_to": "re_scrutiny"} if bad else {}
+            continue
+        if stage == "compliance":
+            end = t + timedelta(days=tri(r, 3, 32, 11))
+            phases.append({"stage": stage, "phase": "with_institution", "start": t, "end": end, "due_on": t + timedelta(days=cfg["days"]), "extra": dict(extra)})
+            t, stage, extra = end, extra.get("return_to", "re_scrutiny"), {}
+            continue
+        if stage in engine.COMMITTEES:
+            start = max(t, sfrom)
+            act = start + timedelta(days=(tri(r, 3, 30, 12) if region == "Central" else tri(r, 1, 20, 7)) if stage == "evc"
+                                    else tri(r, 1, 26, 9) if stage == "scrutiny" else tri(r, 1, 13, 5))
+            phases.append({"stage": stage, "phase": "to_schedule", "start": t, "end": act, "due_on": start + timedelta(days=cfg.get("schedule_days", 5))})
+            spread = {"scrutiny": (0, 75, 28), "evc": (0, 45, 16), "shc": (0, 30, 10), "re_scrutiny": (0, 20, 6), "sac": (0, 12, 4)}[stage]
+            meeting = act + timedelta(days=cfg.get("lead", 7) + tri(r, *spread))
+            rep = cfg.get("report", 2)
+            report_on = meeting + timedelta(days=tri(r, 0, 2.4, 1) if r.random() < .93 else tri(r, 4, 12, 6))
+            phases.append({"stage": stage, "phase": "scheduled", "start": act, "end": report_on, "due_on": meeting + timedelta(days=rep), "meeting_on": meeting})
+            p = {"scrutiny": .4, "re_scrutiny": .18, "evc": .25, "shc": .35, "sac": 0}[stage]
+            bad = r.random() < p
+            t = report_on
+            if stage == "scrutiny":
+                stage, extra = ("compliance", {"return_to": "re_scrutiny"}) if bad else (after_scr[0], {})
+                defs = bad
+            elif stage == "re_scrutiny":
+                defs = bad
+                stage = (after_scr[0] if not bad else ("shc" if "shc" in aa else "ec"))
+            elif stage == "evc":
+                stage = "ec" if not bad else ("shc" if "shc" in aa else "ec")
+            elif stage == "shc":
+                stage = "ec"
+            continue
+        if stage == "ec":
+            prep = s["cycle"].get("ec_prep_days", 3)
+            m = engine.next_ec(t + timedelta(days=prep))
+            phases.append({"stage": "ec", "phase": "pending", "start": t, "end": m or t + timedelta(days=60), "due_on": m or t + timedelta(days=10)})
+            return phases, m
+        raise RuntimeError(stage)
+
+
+def replay(seasons: int = 6, per_season: int = 500) -> dict:
+    s = settings.get()
+    D = d(s["cycle"]["last_date_approval"])
+    natures = list(s["natures"])
+    weights = [52 if k == "eoa_self_disclosure" else 13 if k == "increase_intake" else 9 if k == "new_programme" else 7 if k == "new_institution" else 2 for k in natures]
+    regions = list(s["regions"])
+    res = []
+    for season in range(seasons):
+        r = random.Random(1000 + season)
+        for k in range(per_season):
+            nature = r.choices(natures, weights=weights)[0]
+            region = r.choice(regions)
+            w = engine.window_of(nature, region)
+            a0, b0 = d(w["from"]), d(w["to"])
+            sub = a0 + timedelta(days=r.randint(0, (b0 - a0).days))
+            phases, decided = simulate(r, nature, region, sub)
+            missed = decided is None or decided > D
+            a = {"id": "R", "nature": nature, "region": region, "detail": "{}"}
+            age_first = cd_first = risk_first = None
+            fast_ok_at_first = None
+            save = {}                 # method -> could fast-tracking still make the date on the day it first warned?
+            flagged_days_age = flagged_days_cd = 0
+            day = sub
+            end = min(phases[-1]["start"], D)
+            while day <= end:
+                ph = next((p for p in phases if p["start"] <= day < p["end"]), None)
+                if ph:
+                    step = {"stage": ph["stage"], "phase": ph["phase"], "due_on": iso(ph["due_on"]), "meeting_on": iso(ph.get("meeting_on")),
+                            "extra": json.dumps(ph.get("extra") or {})}
+                    cd = engine.countdown(a, step, day)
+                    late = day > ph["due_on"]
+                    if late:
+                        flagged_days_age += 1
+                        if not age_first:
+                            age_first, save["age"] = day, cd["spare_fast"] >= 0
+                    if cd["spare"] < 0:
+                        flagged_days_cd += 1
+                        if not cd_first:
+                            cd_first = day
+                            fast_ok_at_first = save["cd"] = cd["spare_fast"] >= 0
+                    if cd["risk"] != "on_track" and not risk_first:
+                        risk_first, save["risk"] = day, cd["spare_fast"] >= 0
+                day += timedelta(days=1)
+            res.append({"missed": missed, "age": age_first, "cd": cd_first, "risk": risk_first, "fast_ok": fast_ok_at_first, "save": save,
+                        "days_age": flagged_days_age, "days_cd": flagged_days_cd, "decided": decided})
+    misses = [x for x in res if x["missed"]]
+    made = [x for x in res if not x["missed"]]
+
+    def method(key: str, name: str, how: str) -> dict:
+        warned = [x for x in misses if x[key]]
+        leads = [(D - x[key]).days for x in warned]
+        flagged = [x for x in res if x[key]]
+        return {"name": name, "how": how, "misses_warned": len(warned), "share_warned": round(100 * len(warned) / max(1, len(misses))),
+                "share_warned_21": round(100 * sum(l >= 21 for l in leads) / max(1, len(misses))),
+                "share_saveable": round(100 * sum(1 for x in misses if x["save"].get(key)) / max(1, len(misses))),
+                "median_lead": statistics.median(leads) if leads else None,
+                "flagged": len(flagged), "precision": round(100 * sum(x["missed"] for x in flagged) / max(1, len(flagged))),
+                "false_alarms": round(100 * sum(1 for x in made if x[key]) / max(1, len(made)))}
+    out = {"applications": len(res), "seasons": seasons, "missed": len(misses), "missed_share": round(100 * len(misses) / len(res), 1),
+           "deadline": iso(D),
+           "methods": [method("age", "Time allowed per step", "warn when any step is past its time allowed (the usual pendency alert)"),
+                       method("cd", "Countdown to the calendar date", "warn when the date is short at the usual pace"),
+                       method("risk", "Countdown, early warning", "also warn when one more deficiency round would miss the date")],
+           "actionable": round(100 * sum(1 for x in misses if x["cd"] and x["fast_ok"]) / max(1, sum(1 for x in misses if x["cd"]))),
+           "note": "Simulated cycles with random stage times (independent of the demo data). Both methods see the same applications on the same days."}
+    return out
+
+
+# ------------------------------------------------------------------------------------ 4. real data, follow-ups, audit
+
+def real_and_demo() -> dict:
+    insts = json.loads((ROOT / "data/real/institutions.json").read_text(encoding="utf-8"))
+    letters = [l for i in insts for l in i["letters"]]
+    with_defs = [(i, l) for i in insts for l in i["letters"] if l["deficiencies"]]
+    pairs = again = 0
+    examples = []
+    for i, l in with_defs:
+        y = int(l["ay"][:4]) + 1
+        nxt = next((x for x in i["letters"] if x["ay"] == f"{y}-{str(y + 1)[2:]}"), None)
+        if nxt:
+            pairs += 1
+            same = sorted(set(l["deficiencies"]) & set(nxt["deficiencies"]))
+            if same:
+                again += 1
+                examples.append(f"{i['name'].title()}: {'; '.join(same)} ({l['ay']} and {nxt['ay']})")
+    unit = lambda c: f"{c['n']} {c['unit'][:-1] if c['n'] == 1 else c['unit']}"  # noqa: E731
+    windows = Counter(unit(l["comply_within"]) for _, l in with_defs if l.get("comply_within"))
+    by_year = {}
+    for _, l in with_defs:
+        if l.get("comply_within"):
+            by_year.setdefault(l["ay"], set()).add(unit(l["comply_within"]))
+    real = {"institutions": len(insts), "letters": len(letters), "with_deficiencies": len(with_defs),
+            "share_with_deficiencies": round(100 * len(with_defs) / max(1, len(letters))), "pairs": pairs, "noted_again": again,
+            "examples": examples, "windows": dict(windows), "window_by_year": {k: sorted(v) for k, v in sorted(by_year.items())},
+            "aph_clauses": len(json.loads((ROOT / "data/real/aph_locs.json").read_text()))}
+    demo = {}
+    if DEMO_DB.exists():
+        c = sqlite3.connect(DEMO_DB)
+        c.row_factory = sqlite3.Row
+        kinds = Counter(r["kind"] for r in c.execute("SELECT kind FROM alerts"))
+        apps = c.execute("SELECT COUNT(*) FROM applications").fetchone()[0]
+        events = c.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        audited = c.execute("SELECT COUNT(*) FROM events e WHERE EXISTS (SELECT 1 FROM audit a WHERE a.ts=e.ts AND a.target=COALESCE(e.app_id, e.item_id))").fetchone()[0]
+        demo = {"applications": apps, "messages": sum(kinds.values()), "by_kind": dict(kinds), "per_application": round(sum(kinds.values()) / max(1, apps), 1),
+                "movements": events, "movements_logged": audited, "audit_entries": c.execute("SELECT COUNT(*) FROM audit").fetchone()[0]}
+        sys.path.insert(0, str(ROOT / "backend"))
+        rows = [dict(r) for r in c.execute("SELECT * FROM audit ORDER BY seq")]
+        import hashlib
+        prev, ok = "0" * 64, True
+        for r in rows:
+            h = hashlib.sha256("|".join([str(r["seq"]), r["ts"], r["actor"], r["role"], r["action"], r["target"], r["payload"], prev]).encode()).hexdigest()
+            if r["prev_hash"] != prev or r["hash"] != h:
+                ok = False
+                break
+            prev = r["hash"]
+        demo["chain_ok"] = ok
+    return {"real": real, "demo": demo}
+
+
+def main() -> None:
+    db.conn()
+    out = {"generated": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    out["routing"] = routing()
+    out["rules"] = rules()
+    out["replay"] = replay()
+    out.update(real_and_demo())
+    (ROOT / "data" / "eval_report.json").write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
+    m = {x["name"]: x for x in out["replay"]["methods"]}
+    print(f"routing {out['routing']['passed']}/{out['routing']['cases']} · rules {out['rules']['passed']}/{out['rules']['cases']}")
+    print(f"replay: {out['replay']['applications']} applications, {out['replay']['missed']} decided after the date")
+    for x in out["replay"]["methods"]:
+        print(f"  {x['name']}: warned {x['share_warned']}% of misses (≥21 days ahead: {x['share_warned_21']}%; while still saveable: {x['share_saveable']}%), median {x['median_lead']} days ahead, "
+              f"precision {x['precision']}%, false alarms {x['false_alarms']}% of on-time applications")
+    print("real:", {k: v for k, v in out["real"].items() if k != "examples"})
+    print("demo:", out.get("demo"))
+    bad = [r for r in out["routing"]["rows"] + out["rules"]["rows"] if not r["ok"]]
+    for r in bad[:10]:
+        print("FAILED", r)
 
 
 if __name__ == "__main__":

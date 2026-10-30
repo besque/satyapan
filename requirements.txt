@@ -3,8 +3,6 @@ uvicorn==0.54.0
 pydantic==2.14.1
 python-multipart==0.0.32
 PyYAML==6.0.3
-numpy==2.5.4
-RapidFuzz==3.14.6
-fastembed==0.9.1
-indic_transliteration==2.3.82
 httpx==0.28.1
+# only to rebuild data/real/ from the original public PDFs (scripts/build_real_data.py):
+# pymupdf==2.0

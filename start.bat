@@ -3,7 +3,6 @@ REM Start (or restart) the website at http://127.0.0.1:8000  - keep this window 
 cd /d "%~dp0"
 powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }"
 set PYTHONIOENCODING=utf-8
-set HF_HUB_DISABLE_SYMLINKS_WARNING=1
 echo.
 echo Website starting at http://127.0.0.1:8000   (keep this window open, press Ctrl+C to stop)
 echo.

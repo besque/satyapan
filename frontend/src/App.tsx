@@ -1,33 +1,49 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
-import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { api, getToken, setToken, type User } from './api'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
+import { api, getToken, setToken, type Brand, type User } from './api'
+import { fmtDate, fmtLong } from './ui'
 import Login from './pages/Login'
-import Overview from './pages/Overview'
-import Cases from './pages/Cases'
-import Case from './pages/Case'
-import Coordination from './pages/Coordination'
+import Home from './pages/Home'
+import Applications from './pages/Applications'
+import Application from './pages/Application'
+import Evc from './pages/Evc'
+import Compliance from './pages/Compliance'
+import Item from './pages/Item'
 import Institutions from './pages/Institutions'
 import Institution from './pages/Institution'
-import Register from './pages/Register'
 import Reports from './pages/Reports'
-import Settings from './pages/Settings'
+import Alerts from './pages/Alerts'
+import Rules from './pages/Rules'
 import Audit from './pages/Audit'
 import Evaluation from './pages/Evaluation'
-import Alerts from './pages/Alerts'
 
 export const UserCtx = createContext<User | null>(null)
 export const useUser = () => useContext(UserCtx)!
+type Clock = { today: string; demo: boolean; ay: string; last_date_approval: string; days_left: number }
+type ClockState = { clock: Clock | null; tick: number; move: (days: number) => Promise<void> }
+export const ClockCtx = createContext<ClockState>({ clock: null, tick: 0, move: async () => {} })
+export const useClock = () => useContext(ClockCtx)
+export const BrandCtx = createContext<Brand>({ name: '', tagline: '' })
+export const useBrand = () => useContext(BrandCtx)
+
+function Logo() {
+  return <div className="logo" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round">
+    <circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 2.5M9.5 2.5h5" /></svg></div>
+}
 
 function Header({ user, onLogout }: { user: User | null; onLogout?: () => void }) {
+  const brand = useBrand()
+  const { clock } = useClock()
+  const staff = user && user.role !== 'institution'
   return <>
     <div className="topstrip"><div className="in">
-      <span>Institution complaint monitoring · all Bureaus and Cells</span>
-      {user && <span>Signed in: <b>{user.name}</b>{user.title ? ` (${user.title})` : ''} · <button onClick={onLogout}>Sign out</button></span>}
+      <span>{clock && <>{fmtLong(clock.today)} · Approval cycle {clock.ay} · Last date for approval: {fmtDate(clock.last_date_approval)}</>}</span>
+      {user && <span><b>{user.name}</b>{user.title ? `, ${user.title}` : ''} · <button className="lnk" onClick={onLogout}>Sign out</button></span>}
     </div></div>
     <div className="header"><div className="in">
-      <div className="logo"><svg width="22" height="22" viewBox="0 0 24 24"><circle cx="7" cy="12" r="3.2" fill="#fff" /><circle cx="17" cy="7" r="3.2" fill="#fff" /><circle cx="17" cy="17" r="3.2" fill="#fff" /><path d="M9.6 10.6 14.4 8.4M9.6 13.4l4.8 2.2" stroke="#fff" strokeWidth="1.8" /></svg></div>
-      <div><b>Samanvay</b><small>One view of every complaint and action on an institution</small></div>
-      {user && <Search />}
+      <Logo />
+      <div><b className="brand">{brand.name}</b><small>{brand.tagline}</small></div>
+      {staff && <Search />}
     </div></div>
   </>
 }
@@ -46,10 +62,10 @@ function Search() {
   const go = (to: string) => { setOpen(false); setQ(''); nav(to) }
   return (
     <div className="gsearch" onBlur={() => setTimeout(() => setOpen(false), 150)}>
-      <input placeholder="Search case no., institution or Permanent ID" value={q} onChange={(e) => { setQ(e.target.value); setOpen(true) }} onFocus={() => setOpen(true)} />
-      {open && r && (r.cases.length + r.institutions.length > 0) && <div className="gdrop">
-        {r.institutions.map((i: any) => <button key={i.permanent_id} onMouseDown={() => go(`/institution/${i.permanent_id}`)}><b>{i.name}</b><span className="small faint"> {i.city} · {i.permanent_id}</span></button>)}
-        {r.cases.map((c: any) => <button key={c.id} onMouseDown={() => go(`/case/${c.id}`)}><span className="mono">{c.id}</span><span className="small faint"> {c.institution}</span></button>)}
+      <input placeholder="Search application no., institution or Permanent ID" value={q} onChange={(e) => { setQ(e.target.value); setOpen(true) }} onFocus={() => setOpen(true)} aria-label="Search" />
+      {open && r && (r.applications.length + r.institutions.length > 0) && <div className="gdrop">
+        {r.applications.map((a: any) => <button key={a.id} onMouseDown={() => go(`/app/${a.id}`)}><span className="mono">{a.id}</span><span className="small faint"> {a.name}</span></button>)}
+        {r.institutions.map((i: any) => <button key={i.pid} onMouseDown={() => go(`/institution/${i.pid}`)}><b>{i.name}</b><span className="small faint"> {i.city || ''} · {i.pid}{i.source === 'public' ? ' · real' : ''}</span></button>)}
       </div>}
     </div>
   )
@@ -58,20 +74,21 @@ function Search() {
 function Bell() {
   const [n, setN] = useState(0)
   const loc = useLocation()
-  useEffect(() => { api('/api/notifications').then((r) => setN(r.unread)).catch(() => {}) }, [loc.pathname])
-  return <NavLink to="/alerts" className="bell" title="Alerts">Alerts{n > 0 && <span className="count">{n > 99 ? '99+' : n}</span>}</NavLink>
+  const { tick } = useClock()
+  useEffect(() => { api('/api/alerts').then((r) => setN(r.unread)).catch(() => {}) }, [loc.pathname, tick])
+  return <NavLink to="/alerts" className="bell">Alerts{n > 0 && <span className="count">{n > 99 ? '99+' : n}</span>}</NavLink>
 }
-
-const MORE = ['/register', '/settings', '/audit', '/evaluation']
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [ready, setReady] = useState(false)
+  const [brand, setBrand] = useState<Brand>({ name: '', tagline: '' })
+  const [clock, setClock] = useState<Clock | null>(null)
+  const [tick, setTick] = useState(0)
   const nav = useNavigate()
-  const { pathname } = useLocation()
-  const [more, setMore] = useState(false)
-  const moreOpen = more || MORE.some((p) => pathname.startsWith(p))
   useEffect(() => {
+    api<Brand>('/api/brand').then((b) => { setBrand(b); document.title = `${b.name} · ${b.tagline}` }).catch(() => {})
+    api<Clock>('/api/clock').then(setClock).catch(() => {})
     const as = new URLSearchParams(window.location.search).get('as')
     if (as) {
       api<{ token: string; user: User }>('/api/login', { method: 'POST', json: { user: as } })
@@ -81,48 +98,61 @@ export default function App() {
     if (!getToken()) { setReady(true); return }
     api<User>('/api/me').then(setUser).catch(() => setToken(null)).finally(() => setReady(true))
   }, [])
+  const move = async (n: number) => {
+    const r = await api<Clock>('/api/clock', { method: 'POST', json: { days: n } })
+    setClock(r)
+    setTick((x) => x + 1)
+  }
   if (!ready) return null
   const logout = () => { setToken(null); setUser(null); nav('/') }
-  if (!user) return <><Header user={null} /><Login onLogin={(u) => { setUser(u); nav('/') }} /></>
+  const state = { clock, tick, move }
+  if (!user) return <BrandCtx.Provider value={brand}><ClockCtx.Provider value={state}><Header user={null} />
+    <Login onLogin={(u) => { setUser(u); nav('/') }} /></ClockCtx.Provider></BrandCtx.Provider>
+  const inst = user.role === 'institution'
   return (
-    <UserCtx.Provider value={user}>
+    <BrandCtx.Provider value={brand}><ClockCtx.Provider value={state}><UserCtx.Provider value={user}>
       <Header user={user} onLogout={logout} />
       <nav className="nav"><div className="in">
-        <NavLink to="/" end>Overview</NavLink>
-        <NavLink to="/cases">Cases</NavLink>
-        <NavLink to="/coordination">Coordination</NavLink>
-        <NavLink to="/institutions">Institutions</NavLink>
-        <NavLink to="/reports">Reports</NavLink>
-        <span className="navright">
-          <Bell />
-          <button className={`morebtn ${moreOpen ? 'active' : ''}`} onClick={() => setMore(!more)} aria-expanded={moreOpen}>More ▾</button>
-        </span>
+        {inst ? <>
+          <NavLink to="/" end>What you owe AICTE</NavLink>
+          <NavLink to="/compliance">Undertakings and documents</NavLink>
+          <span className="right"><Bell /><NavLink to="/rules">Rules</NavLink></span>
+        </> : <>
+          <NavLink to="/" end>{user.role === 'head' ? 'Overview' : user.role === 'admin' ? 'Overview' : 'My work'}</NavLink>
+          <NavLink to="/applications">Applications</NavLink>
+          <NavLink to="/evc">EVC</NavLink>
+          <NavLink to="/compliance">Compliance</NavLink>
+          <NavLink to="/reports">Reports</NavLink>
+          <span className="right">
+            <Bell />
+            <NavLink to="/institutions">Institutions</NavLink>
+            <NavLink to="/rules">Rules</NavLink>
+            <NavLink to="/log">Activity log</NavLink>
+            <NavLink to="/tests">Test results</NavLink>
+          </span>
+        </>}
       </div></nav>
-      {moreOpen && <div className="subnav"><div className="in">
-        {(user.role === 'officer' || user.role === 'management') && <NavLink to="/register">Register complaint / import register</NavLink>}
-        <NavLink to="/settings">Settings</NavLink>
-        <NavLink to="/audit">Activity log</NavLink>
-        <NavLink to="/evaluation">Test results</NavLink>
-      </div></div>}
-      <main className="page">
+      <main className="page" key={tick}>
         <Routes>
-          <Route path="/" element={<Overview />} />
-          <Route path="/cases" element={<Cases />} />
-          <Route path="/case/*" element={<Case />} />
-          <Route path="/coordination" element={<Coordination />} />
-          <Route path="/coordination/:id" element={<Coordination />} />
+          <Route path="/" element={<Home />} />
+          <Route path="/applications" element={<Applications />} />
+          <Route path="/app/:id" element={<Application />} />
+          <Route path="/evc" element={<Evc />} />
+          <Route path="/compliance" element={<Compliance />} />
+          <Route path="/item/:id" element={<Item />} />
           <Route path="/institutions" element={<Institutions />} />
           <Route path="/institution/:pid" element={<Institution />} />
-          <Route path="/register" element={<Register />} />
           <Route path="/reports" element={<Reports />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/audit" element={<Audit />} />
-          <Route path="/evaluation" element={<Evaluation />} />
           <Route path="/alerts" element={<Alerts />} />
+          <Route path="/rules" element={<Rules />} />
+          <Route path="/log" element={<Audit />} />
+          <Route path="/tests" element={<Evaluation />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>
-      <footer className="foot"><div className="in">All institutions, people and complaints shown are simulated test data. Automated alerts are advisory; actions and decisions are taken by authorised officials. <Link to="/evaluation">How well it works</Link></div></footer>
-    </UserCtx.Provider>
+      <footer className="foot"><div className="in">
+        {brand.name} · {brand.tagline}. Alerts and suggestions support officers; scrutiny, inspections and decisions rest with the competent authority.
+      </div></footer>
+    </UserCtx.Provider></ClockCtx.Provider></BrandCtx.Provider>
   )
 }

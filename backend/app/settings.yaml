@@ -1,14 +1,124 @@
-# Samanvay configuration. An administrator can change every value here from the Settings page;
-# changes are stored as overrides and recorded in the activity log.
+# Routing, time limits and alerts for the approval cycle.
+# An administrator can change any value on the Rules page; every change is kept in the activity log.
+# `cite` names a clause in the `cites` list at the end (Approval Process Handbook 2024-27 unless stated).
 
-bureaus:
-  PGRC: { name: Public Grievance Redressal Cell, short: PGRC }
-  RB:   { name: Regulation Bureau, short: RB }
-  ARC:  { name: Anti-Ragging Cell, short: ARC }
-  AB:   { name: Approval Bureau, short: AB }
-  RO:   { name: Regional Office, short: RO }
+cycle:
+  ay: "2027-28"
+  # The date the system treats as today. In use this is left empty (the real date); the demo sets it
+  # to a day in the middle of the approval cycle and lets you move it forward.
+  today: "2027-05-17"
+  # Application windows: pattern of the AICTE Public Notice for 2025-26 (04.11.2024), moved to the 2027-28 cycle.
+  # `scrutiny_from`: committees for applications of that window are fixed from this date.
+  windows:
+    - {name: "Existing institutions, first group", regions: [Central, Eastern, Northern, North-Western, North-Eastern], from: "2026-11-06", to: "2026-11-20", scrutiny_from: "2027-01-04"}
+    - {name: "Existing institutions, second group", regions: [Western, Southern, South-Western, South-Central], from: "2026-11-25", to: "2026-12-09", scrutiny_from: "2027-01-04"}
+    - {name: "New institutions", new: true, from: "2026-12-14", to: "2026-12-25", scrutiny_from: "2027-02-15"}
+  last_date_approval: "2027-06-10"
+  last_date_after_appeal: "2027-06-30"
+  ay_start: "2027-07-01"
+  calendar_note: "AICTE Academic Calendar 2023-24 set 10 June for grant or refusal of approval and 30 June after appeal. The 2027-28 calendar is not yet notified; the administrator updates these dates when it is."
+  # Executive Committee meetings that take decisions (set by the Council secretariat).
+  ec_meetings: ["2027-01-28", "2027-02-25", "2027-03-18", "2027-04-08", "2027-04-29", "2027-05-13", "2027-05-27", "2027-06-08", "2027-06-24", "2027-06-29"]
+  ec_prep_days: 3          # days the Regulation Bureau needs to place a case before the Executive Committee
 
-# AICTE regional offices (aicte.gov.in "ROs Details").
+# Stages. `days` is the time allowed for the whole stage (also the usual time it takes).
+# For committee stages, `schedule_days` is the time allowed to fix the meeting, `lead` the notice
+# the institution and experts must get, and `report` the time to record the outcome after the meeting.
+# The handbook sets no internal time limits; these are the administrator's.
+stages:
+  self_disclosure: {label: "Self-disclosure check", short: "Self-disclosure", holder: RB, days: 7, cite: CL_2_5}
+  scrutiny:    {label: "Scrutiny Committee", short: "Scrutiny", holder: committee, schedule_by: RB, days: 14, schedule_days: 21, lead: 7, report: 2, cite: CL_1_8_B}
+  compliance:  {label: "Institution submits compliance", short: "Compliance", holder: institution, days: 15, cite: CL_2_4}
+  re_scrutiny: {label: "Re-Scrutiny Committee", short: "Re-scrutiny", holder: committee, schedule_by: RB, days: 10, schedule_days: 10, lead: 5, report: 2, cite: CL_1_8_G}
+  evc:         {label: "Expert Visit Committee", short: "EVC", holder: committee, schedule_by: RO, days: 21, schedule_days: 14, lead: 7, report: 2, video_before: 2, cite: CL_1_9_A}
+  shc:         {label: "Standing Hearing Committee", short: "SHC", holder: committee, schedule_by: RB, days: 14, schedule_days: 10, lead: 7, report: 2, cite: CL_2_23_3}
+  ec:          {label: "Executive Committee decision", short: "EC decision", holder: EC, days: 10, cite: CL_1_10_A}
+  appeal:      {label: "Appeal window", short: "Appeal", holder: institution, days: 7, cite: CL_2_24_A}
+  sac:         {label: "Standing Appellate Committee", short: "SAC", holder: committee, schedule_by: RB, days: 10, schedule_days: 5, lead: 5, report: 2, cite: CL_1_11_E}
+  council:     {label: "Council decision", short: "Council", holder: EC, days: 5, cite: CL_1_11_E}
+
+# Nature of application -> stages, exactly as APH Table 2.3 (and Chapter I for new institutions).
+# `route` = stages marked "Yes"; `aa` = stages marked "AA" (as applicable, depending on the outcome of
+# the previous steps). `deposit`: a security deposit is due after approval (Cl. 1.12, 2.25 d-e).
+natures:
+  eoa_self_disclosure:   {label: "Extension of Approval based on Self-Disclosure", route: [self_disclosure]}
+  nri_seats:             {label: "Seats for Non-Resident Indians", route: [self_disclosure]}
+  conversion_level:      {label: "Conversion of Diploma level into Degree level (and vice-versa)", route: [scrutiny, evc], aa: [shc, sac], deposit: true}
+  name_change:           {label: "Change in name of Institution / affiliating University / type", route: [scrutiny]}
+  new_programme:         {label: "New Programme / Level in an existing Institution", route: [scrutiny, evc], aa: [shc, sac], deposit: true}
+  merger:                {label: "Merger of Institutions (same / different Trust, same campus or city)", route: [scrutiny, evc], aa: [shc, sac]}
+  eoa_after_break:       {label: "Extension of Approval after a break / restoration / hibernation", route: [scrutiny, evc], aa: [shc, sac]}
+  fn_oci_seats:          {label: "Supernumerary seats for Foreign Nationals / OCI / Gulf", route: [scrutiny]}
+  increase_intake:       {label: "Increase in intake / additional course", route: [scrutiny, evc], aa: [shc, sac]}
+  integrated_dual:       {label: "Integrated / Dual Degree course", route: [scrutiny, evc], aa: [shc, sac]}
+  fpm:                   {label: "Fellow Programme in Management", route: [scrutiny, evc], aa: [shc, sac]}
+  course_change:         {label: "Change in course name / merger of courses / reduction in intake", route: [scrutiny]}
+  collaboration:         {label: "Collaboration and Twinning Programme", route: [scrutiny, evc], aa: [shc, sac]}
+  change_of_site:        {label: "Change of site / location", route: [scrutiny, evc], aa: [shc, sac]}
+  closure_institution:   {label: "Closure of the Institution", route: [scrutiny]}
+  women_coed:            {label: "Women's Institution to Co-ed (and vice-versa)", route: [scrutiny], deposit: true}
+  closure_programme:     {label: "Closure of Programme(s) / Course(s)", route: [scrutiny]}
+  bank_details:          {label: "Change in the bank details", route: [scrutiny]}
+  trust_name_change:     {label: "Change in name of the Trust / Society / Company", route: [scrutiny]}
+  deemed_university:     {label: "Institution converted into a Deemed-to-be-University", route: [scrutiny, evc], aa: [shc, sac]}
+  odl_online:            {label: "Online Learning / ODL courses", route: [scrutiny, evc], aa: [shc, sac]}
+  new_institution:       {label: "New Technical Institution", route: [scrutiny, evc], aa: [sac], deposit: true, chapter: "I"}
+
+countdown:
+  # An application is "at risk" when one more round of deficiencies would push its decision past the
+  # Academic Calendar date, and "needs fast-tracking" when even the usual pace would.
+  fast_track_note: "Fast-tracking means holding each remaining committee at the minimum notice."
+
+alerts:
+  aicte:                         # steps held by an AICTE office, committee or the Executive Committee
+    due_soon_days: 3
+    ladder:
+      - {level: 1, label: "Overdue", after: 1, to: "the holding office"}
+      - {level: 2, label: "Escalated to head of office", after: 7, spare_below: 0, to: "head of the holding office"}
+      - {level: 3, label: "Escalated to senior management", after: 14, spare_below: -7, to: "senior management"}
+  institution:                   # steps held by the institution
+    remind_before: [7, 3, 0]
+    overdue_notice_after: [1, 7, 21]
+    tell_officer_after: 3        # the processing officer is told, to decide the next step
+  undertakings: {remind_before: [30, 7, 0], escalate_after: [1, 30]}
+  documents:    {remind_before: [90, 60, 30, 7, 0], escalate_after: [1, 30]}
+  lease:        {remind_before_months: [24, 12, 6, 3, 1]}
+  verification: {days: 7}        # time an officer has to verify what an institution submitted
+  channels:
+    institution: [portal, email, sms]
+    aicte: [portal, email]
+
+documents:
+  fire_noc:             {label: "Fire Safety Certificate", verify_by: RO, cite: CL_6_17_I}
+  structural_stability: {label: "Structural Stability Certificate", verify_by: RO, valid_years: 5, building_age: 30, cite: CL_6_17_H}
+  lease_deed:           {label: "Registered lease deed (land)", verify_by: RO, min_years: 30, cite: CL_2_1_E}
+  occupancy:            {label: "Occupancy / Completion Certificate", verify_by: RO, cite: ANX1_OC}
+
+deposit:
+  days: 15
+  steps:
+    - {until: "05-31", penalty: 10}
+    - {until: "07-31", penalty: 20}
+  after: "Approval to be withdrawn: refer to the competent authority"
+  cite: CL_2_25_F
+  # Table 1.4, in lakh rupees: [Diploma, UG, PG]; doubled for private leased land or building.
+  amounts: {Engineering: [15, 35, 15], Planning: [15, 15, 15], "Applied Arts and Crafts": [15, 15, 15], Design: [15, 15, 15],
+            "Hotel Management and Catering Technology": [15, 15, 15], "Computer Applications": [0, 5, 15], Management: [0, 5, 15]}
+  amounts_cite: T1_4
+
+# Conditions an approval can be granted subject to. Each becomes a tracked item with a due date.
+conditions:
+  letter_deficiencies:    {label: "Comply with the deficiencies noted in the approval letter", due_months: 6, verify_by: RB, carry_forward: true, cite: EOA_LETTER,
+                           consequence: "Noted again as a deficiency in next year's application (Cl. 2.25 c)"}
+  remaining_requirements: {label: "Complete all remaining requirements of the Regulations and the APH", due_months: 1, verify_by: RB, cite: AFF_1MONTH,
+                           consequence: "AICTE may withdraw approval (affidavit undertaking)"}
+  occupancy_on_completion: {label: "Produce the Occupancy / Completion Certificate on completion of the building", due_months: 6, verify_by: RO, carry_forward: true, cite: ANX1_OC,
+                           consequence: "Carried into next year's scrutiny as a deficiency"}
+  faculty_before_start:   {label: "Appoint the Principal / Director and all faculty before the courses start", due_ay_start: true, verify_by: RB, cite: CL_1_6_D,
+                           consequence: "The courses may not commence"}
+  affiliation_within_loa: {label: "Obtain affiliation and State / UT requirements within the validity of the Letter of Approval", due_years: 2, verify_by: RB, cite: CL_1_10_LOA,
+                           consequence: "The Letter of Approval stands cancelled on expiry"}
+
 regions:
   Central: Bhopal
   Eastern: Kolkata
@@ -20,143 +130,35 @@ regions:
   South-Western: Bengaluru
   Western: Mumbai
 
-# Nature of complaint. `bureau` is the cell that normally handles it; `days` is the disposal
-# timeline in days. `describe` lines are used by the language model to recognise the category
-# (English and Hindi), so they are written as plain descriptions, not keywords.
-categories:
-  fee_refund:
-    label: Fee not refunded
-    bureau: PGRC
-    days: 21
-    describe:
-      - Student withdrew or cancelled admission and the institution has not refunded the fee.
-      - Refund of tuition fee and caution deposit pending after leaving the college.
-      - प्रवेश रद्द करने के बाद संस्थान ने शुल्क वापस नहीं किया।
-      - The college keeps the fee and does not return the money after the seat was surrendered.
-  certificates_withheld:
-    label: Original certificates withheld
-    bureau: PGRC
-    days: 21
-    describe:
-      - The institution is keeping the student's original marksheets and certificates and refuses to return them.
-      - College demands money before giving back original documents.
-      - Original 10th and 12th marksheets, transfer certificate or degree are held back by the college office.
-      - कॉलेज मूल प्रमाणपत्र और अंकतालिका वापस नहीं दे रहा है।
-      - कॉलेज छोड़ने के बाद भी संस्थान अंकतालिका, टीसी और मूल प्रमाणपत्र रोक कर रखता है और लौटाने के लिए पैसे मांगता है।
-  excess_fee:
-    label: Excess or capitation fee
-    bureau: RB
-    days: 60
-    describe:
-      - The institution charges more than the fee fixed by the fee regulatory committee or demands capitation or donation.
-      - Extra charges collected without receipt in the name of development fund.
-      - Compulsory extra payments for bus, uniform, training or other items over the approved fee.
-      - निर्धारित शुल्क से अधिक फीस और डोनेशन मांगा जा रहा है।
-  ragging:
-    label: Ragging
-    bureau: ARC
-    days: 7
-    describe:
-      - Senior students ragged, harassed or assaulted a junior student in the hostel or campus.
-      - Freshers are being forced by seniors and the college has taken no action against ragging.
-      - छात्रावास में सीनियर छात्रों द्वारा रैगिंग और मारपीट।
-  faculty_issues:
-    label: Faculty salary or faculty on paper
-    bureau: RB
-    days: 60
-    describe:
-      - Faculty members are not paid salary as per AICTE pay scale or salary is pending for months.
-      - The institution shows teachers on paper who do not actually teach; classes are not held.
-      - Faculty names listed for approval but those teachers are not working in the college (ghost faculty).
-      - शिक्षकों को महीनों से वेतन नहीं मिला और कागज़ों पर फर्जी फैकल्टी दिखाई गई है।
-  infrastructure:
-    label: Labs, library or facilities lacking
-    bureau: RB
-    days: 60
-    describe:
-      - The institution lacks laboratories, library books, computers, hostel or other facilities required for approval.
-      - Practical classes are not conducted because equipment is missing or broken.
-      - कॉलेज में प्रयोगशाला, पुस्तकालय और आवश्यक सुविधाएं नहीं हैं।
-  unapproved_admission:
-    label: Unapproved course or excess admission
-    bureau: RB
-    days: 60
-    describe:
-      - The institution admitted students to a course or seats that are not approved by AICTE or beyond the approved intake.
-      - College is running a programme without AICTE approval.
-      - बिना मान्यता वाले कोर्स में या स्वीकृत सीटों से अधिक प्रवेश दिया गया।
-  scholarship:
-    label: Scholarship or fee waiver not given
-    bureau: PGRC
-    days: 21
-    describe:
-      - The student's scholarship or tuition fee waiver was not credited or the institution asked the student to pay fees despite the scheme.
-      - Student admitted under the tuition fee waiver (TFW) scheme or with a post-matric scholarship is still being charged tuition fee.
-      - छात्रवृत्ति या शुल्क माफी का लाभ नहीं दिया गया।
-  exam_result:
-    label: Exam, result or degree delay
-    bureau: PGRC
-    days: 21
-    describe:
-      - Results, marksheets, degree or transcripts are delayed and the examination was not conducted properly.
-      - The college did not forward the examination form or admit card, so the student missed the university exam.
-      - परीक्षा परिणाम और डिग्री में देरी।
-  harassment:
-    label: Harassment or discrimination
-    bureau: PGRC
-    days: 21
-    describe:
-      - A student or staff member faces harassment, discrimination, threats or misbehaviour by institution staff or management.
-      - Student suspended or expelled without inquiry, or victimised for raising a complaint.
-      - संस्थान के कर्मचारियों द्वारा उत्पीड़न और धमकी।
-  approval_application:
-    label: Approval application (EoA, intake change)
-    bureau: AB
-    days: 45
-    describe:
-      - Application from the institution for extension of approval, increase in intake or a new course.
-
-# Reply time given to an institution when a bureau seeks its comments.
-institution_reply_days: 15
-
-# Escalation ladder. `at` is the share of the timeline used; reaching it notifies `to`.
-escalation:
-  - { at: 0.8, level: 0, to: officer, label: Due soon }
-  - { at: 1.0, level: 1, to: section_head, label: Overdue }
-  - { at: 1.5, level: 2, to: bureau_head, label: Escalated to bureau head }
-  - { at: 2.0, level: 3, to: management, label: Escalated to senior management }
-
-matching:
-  auto_link: 0.86        # institution confidence at or above this is linked automatically
-  margin: 0.08           # ...and must beat the next candidate by this much
-  same_matter: 0.70      # text similarity at or above this suggests the same matter
-  pattern_min: 3         # complaints from different people on one issue that form a pattern
-  pattern_window_days: 120
-
-# Actions that clash when two different bureaus take them on the same institution.
-# `same_matter: true` means only when the two cases are about the same matter.
-conflicts:
-  - id: approve-while-penal
-    a: [show_cause, penal_action, inquiry_ordered]
-    b: [recommended_approval, eoa_processing]
-    same_matter: false
-    title: Approval being processed while regulatory action is pending
-    why: One bureau is moving towards approval while another has issued a show-cause or ordered an inquiry on the same institution.
-  - id: closed-while-inquiry
-    a: [disposed_resolved]
-    b: [inquiry_ordered, show_cause]
-    same_matter: true
-    title: Closed as resolved while another bureau is still acting
-    why: One bureau closed the matter as resolved on the institution's reply while another bureau is acting on the same matter.
-  - id: asked-twice
-    a: [sought_reply]
-    b: [sought_reply]
-    same_matter: true
-    title: Institution asked twice for the same reply
-    why: Two bureaus have asked the institution to reply on the same matter. One reply, shared, avoids duplicate effort and conflicting answers.
-  - id: parallel-inquiry
-    a: [inquiry_ordered]
-    b: [inquiry_ordered]
-    same_matter: false
-    title: Two inquiries on the same institution
-    why: Two bureaus have ordered separate inquiries or visits. A joint visit saves effort.
+cites:
+  T2_3:        {ref: "Table 2.3", quote: "Table-2.3: Different Steps Involved in the Processing of the Applications"}
+  T1_4:        {ref: "Table 1.4", quote: "Security Deposit (in Lakh) applicable for Institutions under Different Programme(s)"}
+  CL_1_4_2_B:  {ref: "Clause 1.4.2 (b)", quote: "All the new applications shall be processed as per the procedure described in Annexure"}
+  CL_1_6_D:    {ref: "Clause 1.6 (d)", quote: "An Institution shall not commence the Courses, without the appointment of all the Faculty members and"}
+  CL_1_8_B:    {ref: "Clause 1.8 (b)", quote: "The date and time for Scrutiny/Re-Scrutiny Committee shall be informed by the Regulation Bureau to the"}
+  CL_1_8_F:    {ref: "Clause 1.8 (f)", quote: "Based on the recommendations of the Scrutiny Committee, the deficiencies, if any, shall be"}
+  CL_1_8_G:    {ref: "Clause 1.8 (g)", quote: "The Re-Scrutiny Committee shall verify ONLY the deficiencies pointed out by the Scrutiny committee"}
+  CL_1_8_H:    {ref: "Clause 1.8 (h)", quote: "Applications that are found to be in order in all respect by the Scrutiny/ Re-Scrutiny shall be processed"}
+  DEF_EVC:     {ref: "Definition 29", quote: "means the Committee constituted by the Regional Officer as per the"}
+  CL_1_9_A:    {ref: "Clause 1.9 (a)", quote: "The Expert Visit Committee shall be constituted by selection of committee members through a web"}
+  CL_1_9_F:    {ref: "Clause 1.9 (f)", quote: "In case of online EVC, the institution shall prepare a video showcasing all the infrastructural facilities for"}
+  CL_1_10_A:   {ref: "Clause 1.10 (a)", quote: "The Executive Committee (EC) after considering the recommendations of the Committee and views of"}
+  CL_1_10_LOA: {ref: "Clause 1.10 (b)(ii)", quote: "for new Technical Institutions, if issued, shall be valid for two Academic"}
+  CL_1_11_E:   {ref: "Clause 1.11 (e)", quote: "The recommendations of the Standing Appellate Committee shall be placed before the Council whose"}
+  CL_2_1_E:    {ref: "Clause 2.1 (e)", quote: "In case of Institutions having Lease agreement for Land, the Council shall not issue EoA from the Year"}
+  CL_2_3_5:    {ref: "Clause 2.3.5", quote: "Institutions at random shall be subject to EVC (Inspection) for the fulfillment of the norms of the"}
+  CL_2_4:      {ref: "Clause 2.4", quote: "The Institution shall be given an opportunity to submit the compliance of deficiencies (if any), before the"}
+  CL_2_5:      {ref: "Clause 2.5 (a)", quote: "The Council shall grant Extension of Approval based on Self-Disclosure of the availability of the"}
+  CL_2_6_J:    {ref: "Clause 2.6 (j)", quote: "Scrutiny and EVC shall be conducted for any increase in intake in existing courses or new courses."}
+  CL_2_23_3:   {ref: "Clause 2.23.3", quote: "The institutes shall have a chance to submit the compliance for any of the short comings based on"}
+  CL_2_24_A:   {ref: "Clause 2.24 (a)", quote: "the Executive Committee shall have the right to appeal once to the Council within 7 days from the date"}
+  CL_2_25_C:   {ref: "Clause 2.25 (c)", quote: "deficiencies noted by the Scrutiny/ Re-Scrutiny/ Expert Visit Committee shall be fulfilled & submitted as"}
+  CL_2_25_F:   {ref: "Clause 2.25 (f)", quote: "The Applicant shall submit the payment proof of the Security Deposit"}
+  CL_2_25_J:   {ref: "Clause 2.25 (j)", quote: "Extension of Approval shall NOT be granted after the last date as mentioned in Academic Calendar."}
+  CL_6_17_A:   {ref: "Clause 6.17 (a)", quote: "Land required shall be with clear title in the name of the trust / society / company or on a long"}
+  CL_6_17_H:   {ref: "Clause 6.17 (h)", quote: "Structural Stability Certificate is valid for a period"}
+  CL_6_17_I:   {ref: "Clause 6.17 (i)", quote: "A valid Fire Safety Certificate shall be obtained from the Competent Authority."}
+  ANX1_OC:     {ref: "Annexure-1, 1.1 (iv)", quote: "that the same shall be produced on completion of the Building."}
+  AFF_1MONTH:  {ref: "Affidavit format (Appendix)", quote: "within one month from the date of issuance of the approval letter"}
+  EOA_LETTER:  {ref: "AICTE Extension of Approval letter, 2025-26 onwards", quote: "The Institution/ University is having the following deficiencies as per the online application submitted to AICTE and the same shall be complied within Six Months from the date of issue of this EoA.", source: "letter",
+                note: "Most letters allow six months; some allow one year or two years. The time limit of each real letter is read from the letter itself."}

@@ -1,12 +1,16 @@
+import json
 import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
-MODELS = DATA / "models"          # local copy of the language model (downloaded once)
-DB_PATH = Path(os.environ.get("SAMANVAY_DB", DATA / "samanvay.sqlite"))
+REAL = DATA / "real"                 # real public data shipped with the repo (approval letters, handbook pages)
+UPLOADS = DATA / "uploads"           # evidence uploaded by institutions
+DB_PATH = Path(os.environ.get("APP_DB", DATA / "app.sqlite"))
 SETTINGS_YAML = Path(__file__).resolve().parent / "settings.yaml"
-EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
-for p in (DATA, MODELS):
+# The product name lives in one file: brand.json at the repository root. Everything reads it from here.
+BRAND = json.loads((ROOT / "brand.json").read_text(encoding="utf-8"))
+
+for p in (DATA, UPLOADS):
     p.mkdir(parents=True, exist_ok=True)
