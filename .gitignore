@@ -11,6 +11,3 @@ data/*
 !data/eval_report.json
 # real public data shipped with the repo (rebuild with scripts/build_real_data.py)
 !data/real/
-
-# screenshots for the idea deck
-deck-screenshots/
